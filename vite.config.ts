@@ -1,24 +1,41 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import driveMediaHandler from './api/drive-media.js';
+import driveSyncHandler from './api/drive-sync.js';
 
-// Includes a built-in proxy for Google Drive public file streaming so Web Audio API
-// pitch-shifting can decode audio buffers without browser CORS blocks.
+function adaptVercelHandler(handler: any) {
+  return async (req: any, res: any) => {
+    const urlObj = new URL(req.url || '/', 'http://localhost');
+    req.query = Object.fromEntries(urlObj.searchParams.entries());
+    res.status = (code: number) => {
+      res.statusCode = code;
+      return res;
+    };
+    res.json = (obj: any) => {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.end(JSON.stringify(obj));
+      return res;
+    };
+    res.send = (body: any) => {
+      res.end(body);
+      return res;
+    };
+    await handler(req, res);
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'local-vercel-api-middleware',
+      configureServer(server) {
+        server.middlewares.use('/api/drive-media', adaptVercelHandler(driveMediaHandler));
+        server.middlewares.use('/api/drive-sync', adaptVercelHandler(driveSyncHandler));
+      },
+    },
+  ],
   server: {
     port: 5173,
-    proxy: {
-      '/drive-stream': {
-        target: 'https://drive.google.com',
-        changeOrigin: true,
-        followRedirects: true,
-        rewrite: (path) => path.replace(/^\/drive-stream/, ''),
-      },
-      '/googleapis-drive': {
-        target: 'https://www.googleapis.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/googleapis-drive/, ''),
-      }
-    }
-  }
+  },
 });

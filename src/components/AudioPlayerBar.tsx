@@ -1,0 +1,265 @@
+import React, { useRef, useState, useEffect } from 'react';
+import { Play, Pause, RotateCcw, RotateCw, Repeat, ExternalLink, Volume2, Loader2 } from 'lucide-react';
+import { RecordingItem } from '../data/driveCatalog';
+import { getMediaStreamUrl } from '../utils/trackerCalculations';
+
+interface AudioPlayerBarProps {
+  recording: RecordingItem | null;
+  parashaName?: string;
+}
+
+export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, parashaName }) => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isLooping, setIsLooping] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !recording) return;
+
+    setErrorMsg(null);
+    setIsLoading(true);
+    setCurrentTime(0);
+    setDuration(0);
+
+    const streamUrl = getMediaStreamUrl(recording);
+    audio.src = streamUrl;
+    audio.playbackRate = playbackRate;
+    audio.loop = isLooping;
+    audio.load();
+
+    audio
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+        setIsLoading(false);
+      })
+      .catch(() => {
+        // Autoplay may be blocked on initial load until user taps play
+        setIsPlaying(false);
+        setIsLoading(false);
+      });
+  }, [recording?.id, recording?.customAudioDataUrl]);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio || !recording) return;
+    if (isPlaying) {
+      audio.pause();
+      setIsPlaying(false);
+    } else {
+      setErrorMsg(null);
+      audio
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => {
+          setErrorMsg('לא ניתן להפעיל את ההקלטה כרגע. נסו שוב או פתחו ב-Drive.');
+        });
+    }
+  };
+
+  const skipSeconds = (delta: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const next = Math.max(0, Math.min(duration || 9999, audio.currentTime + delta));
+    audio.currentTime = next;
+    setCurrentTime(next);
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const audio = audioRef.current;
+    const val = parseFloat(e.target.value);
+    setCurrentTime(val);
+    if (audio) {
+      audio.currentTime = val;
+    }
+  };
+
+  const toggleLoop = () => {
+    const next = !isLooping;
+    setIsLooping(next);
+    if (audioRef.current) {
+      audioRef.current.loop = next;
+    }
+  };
+
+  const cycleSpeed = () => {
+    const speeds = [1.0, 0.85, 0.75, 1.15];
+    const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
+    const nextSpeed = speeds[nextIdx];
+    setPlaybackRate(nextSpeed);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = nextSpeed;
+    }
+  };
+
+  const formatTime = (sec: number) => {
+    if (!Number.isFinite(sec) || sec < 0) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  if (!recording) {
+    return null;
+  }
+
+  return (
+    <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] px-4 py-3">
+      <audio
+        ref={audioRef}
+        preload="metadata"
+        onLoadedMetadata={(e) => {
+          setDuration(e.currentTarget.duration || 0);
+          setIsLoading(false);
+        }}
+        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime || 0)}
+        onWaiting={() => setIsLoading(true)}
+        onPlaying={() => {
+          setIsLoading(false);
+          setIsPlaying(true);
+        }}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          if (!isLooping) setIsPlaying(false);
+        }}
+        onError={() => {
+          setIsLoading(false);
+          setIsPlaying(false);
+          setErrorMsg('שגיאה בטעינת הקובץ. ניתן לפתוח ישירות מ-Drive.');
+        }}
+      />
+
+      <div className="max-w-xl mx-auto flex flex-col gap-2">
+        {/* Track Info Row */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+              <Volume2 className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="font-bold text-sm text-slate-900 truncate">
+                {parashaName ? `${parashaName} • ` : ''}
+                {recording.aliyah}
+              </div>
+              <div className="text-xs text-slate-500 truncate">{recording.title}</div>
+            </div>
+          </div>
+
+          <a
+            href={recording.viewUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg hover:bg-slate-100"
+            title="פתח קובץ מקורי ב-Google Drive"
+          >
+            <span>Drive</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        </div>
+
+        {errorMsg && (
+          <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
+            <span>{errorMsg}</span>
+            <a
+              href={recording.viewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="font-bold underline ml-2"
+            >
+              נגן ב-Drive
+            </a>
+          </div>
+        )}
+
+        {/* Scrubber Bar */}
+        <div className="flex items-center gap-2.5" dir="ltr">
+          <span className="text-[11px] font-mono text-slate-500 w-9 text-right">
+            {formatTime(currentTime)}
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={duration > 0 ? duration : 100}
+            step={0.1}
+            value={currentTime}
+            onChange={handleSeek}
+            className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+          />
+          <span className="text-[11px] font-mono text-slate-500 w-9">
+            {duration > 0 ? formatTime(duration) : '--:--'}
+          </span>
+        </div>
+
+        {/* Transport Controls Row */}
+        <div className="flex items-center justify-between px-1 pt-0.5">
+          {/* Speed toggle */}
+          <button
+            type="button"
+            onClick={cycleSpeed}
+            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-95 transition"
+            title="מהירות השמעה"
+          >
+            {playbackRate}x
+          </button>
+
+          {/* Main transport */}
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => skipSeconds(-10)}
+              className="p-2 rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition"
+              title="10 שניות אחורה"
+            >
+              <RotateCcw className="w-5 h-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={togglePlay}
+              className="w-12 h-12 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center shadow-md shadow-indigo-200 active:scale-95 transition"
+              aria-label={isPlaying ? 'השהה' : 'נגן'}
+            >
+              {isLoading ? (
+                <Loader2 className="w-6 h-6 animate-spin" />
+              ) : isPlaying ? (
+                <Pause className="w-6 h-6 fill-current" />
+              ) : (
+                <Play className="w-6 h-6 fill-current ml-0.5" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => skipSeconds(10)}
+              className="p-2 rounded-full text-slate-600 hover:bg-slate-100 active:scale-95 transition"
+              title="10 שניות קדימה"
+            >
+              <RotateCw className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Loop toggle */}
+          <button
+            type="button"
+            onClick={toggleLoop}
+            className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition ${
+              isLooping
+                ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+            title="ניגון חוזר בלופ"
+          >
+            <Repeat className="w-3.5 h-3.5" />
+            <span>לופ</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

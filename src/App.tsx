@@ -1,176 +1,275 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { PARASHA_CATALOG, STUDENTS, ROOT_DRIVE_FOLDER_ID, ROOT_DRIVE_FOLDER_URL, STUDENT_TRACKER_SHEET_URL, ParashaFolder, RecordingItem } from './data/driveCatalog';
-import { PitchShiftEngine } from './audio/PitchShiftEngine';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Lock, BookOpen, ShieldCheck, ArrowLeft } from 'lucide-react';
+import {
+  STUDENTS as INITIAL_STUDENTS,
+  StudentProfile,
+} from './data/driveCatalog';
+import { decodeStudentShareToken } from './utils/trackerCalculations';
+import { StudentView } from './components/StudentView';
+import { TeacherView } from './components/TeacherView';
+
+const STORAGE_KEY_STUDENTS = 'torah_trainer_students_v3';
+const STORAGE_KEY_TEACHER_AUTH = 'torah_trainer_teacher_unlocked';
+const DEFAULT_TEACHER_PIN = '1234';
 
 export default function App() {
-  const engineRef = useRef<PitchShiftEngine>(new PitchShiftEngine());
-  const [selectedParasha, setSelectedParasha] = useState<ParashaFolder>(PARASHA_CATALOG[4]); // שמות
-  const [selectedRecording, setSelectedRecording] = useState<RecordingItem>(PARASHA_CATALOG[4].recordings[0]);
-  const [pitchSemitones, setPitchSemitones] = useState<number>(4);
-  const [tempo, setTempo] = useState<number>(1.0);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-  const [currentTime, setCurrentTime] = useState<number>(0);
-  const [duration, setDuration] = useState<number>(8.25);
-  const [loopA, setLoopA] = useState<number | null>(null);
-  const [loopB, setLoopB] = useState<number | null>(null);
-  const [apiKey, setApiKey] = useState<string>('');
-  const [statusMsg, setStatusMsg] = useState<string>('מוכן להשמעה (מצב הדגמת טעמים או טעינת קובץ)');
+  const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const studentParam = urlParams.get('student');
+  const cfgParam = urlParams.get('cfg');
+  const teacherParam = urlParams.get('teacher');
+
+  const [students, setStudents] = useState<StudentProfile[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_STUDENTS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return INITIAL_STUDENTS;
+  });
+
+  const [isTeacherUnlocked, setIsTeacherUnlocked] = useState<boolean>(() => {
+    return localStorage.getItem(STORAGE_KEY_TEACHER_AUTH) === 'true';
+  });
+
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(Boolean(teacherParam && !isTeacherUnlocked));
+  const [previewStudent, setPreviewStudent] = useState<StudentProfile | null>(null);
 
   useEffect(() => {
-    const engine = engineRef.current;
-    engine.onProgress((cur, dur) => {
-      setCurrentTime(cur);
-      setDuration(dur);
-    });
-  }, []);
-
-  const handlePitchChange = (val: number) => {
-    setPitchSemitones(val);
-    engineRef.current.setPitchSemitones(val);
-  };
-
-  const handleTempoChange = (val: number) => {
-    setTempo(val);
-    engineRef.current.setTempo(val);
-  };
-
-  const handlePlayDemoOrTrack = async (rec: RecordingItem) => {
-    setSelectedRecording(rec);
-    if (apiKey.trim()) {
-      try {
-        setStatusMsg('טוען הקלטה מ-Google Drive...');
-        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${rec.id}?alt=media&key=${apiKey.trim()}`);
-        if (!res.ok) throw new Error('Drive API fetch failed');
-        const buf = await res.arrayBuffer();
-        const dur = await engineRef.current.loadArrayBuffer(buf);
-        setDuration(dur);
-        engineRef.current.setPitchSemitones(pitchSemitones);
-        engineRef.current.setTempo(tempo);
-        engineRef.current.play();
-        setIsPlaying(true);
-        setStatusMsg(`מנגן מ-Drive: ${rec.title}`);
-        return;
-      } catch {
-        setStatusMsg('שגיאת הרשאה/CORS מ-Drive — מנגן הדגמת טעמים מובנית');
-      }
+    try {
+      localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(students));
+    } catch {
+      // ignore quota errors
     }
-    const dur = engineRef.current.generateCantillationDemo(rec.title.length);
-    setDuration(dur);
-    engineRef.current.setPitchSemitones(pitchSemitones);
-    engineRef.current.setTempo(tempo);
-    engineRef.current.play();
-    setIsPlaying(true);
-    setStatusMsg(`מנגן: ${rec.title} (${pitchSemitones > 0 ? '+' : ''}${pitchSemitones} חצאי טון)`);
+  }, [students]);
+
+  const handleUpdateStudent = (updated: StudentProfile) => {
+    setStudents((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   };
 
-  const handleLocalFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const buf = await file.arrayBuffer();
-    const dur = await engineRef.current.loadArrayBuffer(buf);
-    setDuration(dur);
-    engineRef.current.setPitchSemitones(pitchSemitones);
-    engineRef.current.setTempo(tempo);
-    engineRef.current.play();
-    setIsPlaying(true);
-    setStatusMsg(`מנגן קובץ מקומי: ${file.name}`);
+  const handleAddStudent = (created: StudentProfile) => {
+    setStudents((prev) => [...prev, created]);
   };
+
+  const handleDeleteStudent = (studentId: string) => {
+    setStudents((prev) => prev.filter((s) => s.id !== studentId));
+  };
+
+  const handleUnlockTeacher = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pinInput.trim() === DEFAULT_TEACHER_PIN) {
+      setIsTeacherUnlocked(true);
+      localStorage.setItem(STORAGE_KEY_TEACHER_AUTH, 'true');
+      setShowPinModal(false);
+      setPinError(false);
+      setPinInput('');
+    } else {
+      setPinError(true);
+    }
+  };
+
+  // Resolve student from URL (?student=boaz&cfg=...)
+  const activeStudentFromUrl = useMemo(() => {
+    if (!studentParam) return null;
+    const decodedToken = cfgParam ? decodeStudentShareToken(cfgParam) : null;
+    const found = students.find(
+      (s) =>
+        s.id.toLowerCase() === studentParam.toLowerCase() ||
+        s.name.trim() === studentParam.trim()
+    );
+
+    if (found && decodedToken) {
+      return {
+        ...found,
+        ...Object.fromEntries(
+          Object.entries(decodedToken).filter(([_, v]) => v !== undefined)
+        ),
+      } as StudentProfile;
+    }
+
+    if (found) return found;
+
+    if (decodedToken && decodedToken.name && decodedToken.parasha) {
+      return {
+        id: decodedToken.id || studentParam,
+        name: decodedToken.name,
+        parasha: decodedToken.parasha,
+        haftarah: decodedToken.haftarah || decodedToken.parasha,
+        barMitzvahDate: decodedToken.barMitzvahDate || '2027-01-01',
+        parashaVerses: decodedToken.parashaVerses ?? 100,
+        skippedVerses: decodedToken.skippedVerses ?? 0,
+        learnedParashaVerses: decodedToken.learnedParashaVerses ?? 0,
+        haftarahVerses: decodedToken.haftarahVerses ?? 22,
+        learnedHaftarahVerses: decodedToken.learnedHaftarahVerses ?? 0,
+        portions: decodedToken.portions || [],
+      };
+    }
+
+    return null;
+  }, [studentParam, cfgParam, students]);
+
+  if (previewStudent) {
+    const livePreviewStudent =
+      students.find((s) => s.id === previewStudent.id) || previewStudent;
+    return (
+      <StudentView
+        student={livePreviewStudent}
+        isTeacherPreview
+        onExitPreview={() => setPreviewStudent(null)}
+      />
+    );
+  }
+
+  if (activeStudentFromUrl && !teacherParam) {
+    return (
+      <div className="relative">
+        <StudentView student={activeStudentFromUrl} />
+        <div className="fixed top-3 left-3 z-30">
+          <button
+            type="button"
+            onClick={() => {
+              if (isTeacherUnlocked) {
+                window.history.pushState({}, '', window.location.pathname);
+                window.location.reload();
+              } else {
+                setShowPinModal(true);
+              }
+            }}
+            className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white/60 hover:text-white transition"
+            title="כניסת מורה"
+          >
+            <Lock className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {showPinModal && (
+          <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4" dir="rtl">
+            <form
+              onSubmit={(e) => {
+                handleUnlockTeacher(e);
+                if (pinInput.trim() === DEFAULT_TEACHER_PIN) {
+                  window.location.href = window.location.pathname;
+                }
+              }}
+              className="bg-white w-full max-w-xs rounded-3xl p-6 shadow-2xl text-center"
+            >
+              <Lock className="w-8 h-8 text-indigo-600 mx-auto mb-2" />
+              <h3 className="font-extrabold text-lg text-slate-900 mb-1">כניסת מורה</h3>
+              <p className="text-xs text-slate-500 mb-4">הזן קוד מורה לניהול התלמידים</p>
+              <input
+                type="password"
+                inputMode="numeric"
+                value={pinInput}
+                onChange={(e) => setPinInput(e.target.value)}
+                placeholder="קוד (1234)"
+                className="w-full text-center text-lg font-bold tracking-widest border border-slate-300 rounded-xl py-2 mb-2"
+                autoFocus
+              />
+              {pinError && (
+                <p className="text-xs text-rose-600 font-semibold mb-2">קוד שגוי</p>
+              )}
+              <div className="flex gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowPinModal(false)}
+                  className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold"
+                >
+                  ביטול
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+                >
+                  כניסה
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (isTeacherUnlocked) {
+    return (
+      <TeacherView
+        students={students}
+        onUpdateStudent={handleUpdateStudent}
+        onAddStudent={handleAddStudent}
+        onDeleteStudent={handleDeleteStudent}
+        onPreviewStudent={(st) => setPreviewStudent(st)}
+      />
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6" dir="rtl">
-      <header className="max-w-6xl mx-auto mb-6 flex flex-wrap items-center justify-between gap-4 bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">קריאה בתורה לבר מצווה – נגן והתאמת סולם (Pitch Shift)</h1>
-          <p className="text-sm text-slate-600">מחובר למבנה תיקיית הדרייב "קריאה בתורה" ({ROOT_DRIVE_FOLDER_ID}) ולמעקב התלמידים</p>
+    <div
+      className="min-h-screen bg-gradient-to-b from-indigo-950 via-slate-900 to-slate-950 text-white flex flex-col justify-between p-5"
+      dir="rtl"
+    >
+      <div className="max-w-md w-full mx-auto pt-8 pb-12">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-indigo-600/30 border border-indigo-400/30 text-indigo-300 flex items-center justify-center mx-auto mb-3 shadow-lg">
+            <BookOpen className="w-7 h-7" />
+          </div>
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            קריאה בתורה והפטרה לבר מצווה
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">
+            בחרו את שמכם לכניסה לאזור האישי או היכנסו כמורה
+          </p>
         </div>
-        <div className="flex gap-3">
-          <a href={ROOT_DRIVE_FOLDER_URL} target="_blank" rel="noreferrer" className="px-4 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 text-sm font-medium">תיקיית קריאה בתורה ב-Drive</a>
-          <a href={STUDENT_TRACKER_SHEET_URL} target="_blank" rel="noreferrer" className="px-4 py-2 rounded-xl bg-indigo-50 text-indigo-800 border border-indigo-200 text-sm font-medium">גיליון מעקב תלמידים</a>
-        </div>
-      </header>
-      <main className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <section className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
-          <h2 className="font-bold text-lg mb-3">תלמידים פעילים ופרשות</h2>
-          <div className="space-y-2 mb-6">
-            {STUDENTS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => {
-                  const found = PARASHA_CATALOG.find((p) => p.name === s.parasha);
-                  if (found) {
-                    setSelectedParasha(found);
-                    setSelectedRecording(found.recordings[0]);
-                  }
-                  handlePitchChange(s.defaultSemitones);
-                }}
-                className="w-full text-right p-3 rounded-xl border border-slate-200 hover:border-indigo-400 flex justify-between items-center"
-              >
-                <span><strong>{s.name}</strong> – {s.parasha}</span>
-                <span className="text-xs bg-indigo-50 text-indigo-700 px-2 py-1 rounded-lg">+{s.defaultSemitones} חצאי טון</span>
-              </button>
-            ))}
-          </div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">טעינת קובץ הקלטה מקומי (.m4a / .aac / .mp3)</label>
-          <input type="file" accept="audio/*" onChange={handleLocalFile} className="w-full text-sm mb-4" />
-          <label className="block text-xs font-semibold text-slate-500 mb-1">Google Drive API Key (אופציונלי להזרמה ישירה)</label>
-          <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="AIzaSy..." className="w-full px-3 py-2 border rounded-xl text-sm" />
-        </section>
 
-        <section className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold">{selectedParasha.name} – {selectedRecording.aliyah}</h2>
-              <p className="text-sm text-slate-500">{statusMsg}</p>
-            </div>
-            <a href={selectedRecording.viewUrl} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 underline">פתח קובץ מקורי ב-Drive</a>
-          </div>
-
-          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 mb-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold">שינוי סולם מוזיקלי בזמן אמת (ללא שינוי מהירות):</span>
-              <span className="text-lg font-bold text-indigo-700">{pitchSemitones > 0 ? `+${pitchSemitones}` : pitchSemitones} חצאי טון</span>
-            </div>
-            <input
-              type="range"
-              min={-6}
-              max={12}
-              step={0.5}
-              value={pitchSemitones}
-              onChange={(e) => handlePitchChange(parseFloat(e.target.value))}
-              className="w-full mb-4"
-            />
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold">מהירות הקראה (Tempo):</span>
-              <span className="font-bold">{Math.round(tempo * 100)}%</span>
-            </div>
-            <input
-              type="range"
-              min={0.6}
-              max={1.3}
-              step={0.05}
-              value={tempo}
-              onChange={(e) => handleTempoChange(parseFloat(e.target.value))}
-              className="w-full"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {selectedParasha.recordings.map((rec) => (
-              <button
-                key={rec.id}
-                onClick={() => handlePlayDemoOrTrack(rec)}
-                className={`p-3 rounded-xl border text-right flex justify-between items-center ${selectedRecording.id === rec.id ? 'border-indigo-600 bg-indigo-50/60' : 'border-slate-200'}`}
-              >
-                <div>
-                  <div className="font-semibold">{rec.aliyah}</div>
-                  <div className="text-xs text-slate-500">{rec.title}</div>
+        <div className="space-y-2.5 mb-8">
+          {students.map((st) => (
+            <button
+              key={st.id}
+              type="button"
+              onClick={() => setPreviewStudent(st)}
+              className="w-full text-right p-4 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 transition flex items-center justify-between gap-3 active:scale-[0.99]"
+            >
+              <div>
+                <div className="font-bold text-base text-white">{st.name}</div>
+                <div className="text-xs text-indigo-200 mt-0.5">
+                  פרשת {st.parasha} • הפטרה: {st.haftarah}
                 </div>
-                <span className="text-xs font-mono uppercase px-2 py-1 bg-white rounded border">{rec.ext}</span>
-              </button>
-            ))}
+              </div>
+              <ArrowLeft className="w-4 h-4 text-indigo-300 shrink-0" />
+            </button>
+          ))}
+        </div>
+
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <ShieldCheck className="w-5 h-5 text-indigo-400" />
+            <h2 className="font-bold text-sm">כניסת מורה (ניהול ומעקב תלמידים)</h2>
           </div>
-        </section>
-      </main>
+          <form onSubmit={handleUnlockTeacher} className="flex gap-2">
+            <input
+              type="password"
+              inputMode="numeric"
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              placeholder="קוד מורה (1234)"
+              className="flex-1 bg-white/10 border border-white/15 rounded-xl px-3.5 py-2 text-sm text-white placeholder:text-slate-400 focus:outline-hidden focus:border-indigo-400"
+            />
+            <button
+              type="submit"
+              className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shrink-0 transition"
+            >
+              כניסה
+            </button>
+          </form>
+          {pinError && (
+            <p className="text-xs text-rose-400 mt-2">קוד שגוי (קוד ברירת מחדל: 1234)</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
