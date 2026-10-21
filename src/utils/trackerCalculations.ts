@@ -76,8 +76,14 @@ export function lookupParashaVerses(parashaName: string): number {
   return found ? found.verses : 0;
 }
 
-export function lookupHaftarahVerses(haftarahName: string): number {
+export function lookupHaftarahVerses(
+  haftarahName: string,
+  customMap: Record<string, number> = HAFTAROT_VERSE_COUNTS
+): number {
   const clean = haftarahName.trim();
+  if (clean in customMap) {
+    return customMap[clean];
+  }
   if (clean in HAFTAROT_VERSE_COUNTS) {
     return HAFTAROT_VERSE_COUNTS[clean];
   }
@@ -133,6 +139,9 @@ export function calculateStudentStats(
 }
 
 export function getMediaStreamUrl(rec: RecordingItem): string {
+  if (rec.localUrl) {
+    return rec.localUrl;
+  }
   if (rec.customAudioDataUrl) {
     return rec.customAudioDataUrl;
   }

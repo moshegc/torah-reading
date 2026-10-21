@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import driveMediaHandler from './api/drive-media.js';
 import driveSyncHandler from './api/drive-sync.js';
+import driveDataHandler from './api/drive-data.js';
 
 function adaptVercelHandler(handler: any) {
   return async (req: any, res: any) => {
@@ -32,6 +33,7 @@ export default defineConfig({
       configureServer(server) {
         server.middlewares.use('/api/drive-media', adaptVercelHandler(driveMediaHandler));
         server.middlewares.use('/api/drive-sync', adaptVercelHandler(driveSyncHandler));
+        server.middlewares.use('/api/drive-data', adaptVercelHandler(driveDataHandler));
       },
     },
   ],

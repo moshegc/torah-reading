@@ -15,33 +15,53 @@ import {
   BookOpen,
   LayoutGrid,
   Table as TableIcon,
+  CalendarRange,
   X,
   FolderPlus,
   Volume2,
   Link as LinkIcon,
   Loader2,
+  Calendar,
+  ScrollText,
+  Cloud,
+  CloudUpload,
+  CheckCircle2,
+  RefreshCw,
 } from 'lucide-react';
 import {
   StudentProfile,
   RecordingItem,
   PARASHA_META_LIST,
-  HAFTAROT_VERSE_COUNTS,
   ROOT_DRIVE_FOLDER_URL,
   STUDENT_TRACKER_SHEET_URL,
 } from '../data/driveCatalog';
 import {
   calculateStudentStats,
   formatDateIL,
+  parseFlexibleDate,
   lookupParashaVerses,
   lookupHaftarahVerses,
-  encodeStudentShareToken,
   parseDriveUrl,
   classifyFileTitle,
 } from '../utils/trackerCalculations';
+import {
+  uploadAudioToDrive,
+  GOOGLE_APPS_SCRIPT_CODE,
+} from '../utils/cloudSync';
+import type { DriveSyncStatus } from '../App';
 import { AudioPlayerBar } from './AudioPlayerBar';
 
 interface TeacherViewProps {
   students: StudentProfile[];
+  haftarotMap: Record<string, number>;
+  gasUrl: string;
+  syncStatus: DriveSyncStatus;
+  syncErrorMessage: string | null;
+  lastSyncedAt: string | null;
+  onSaveGasUrl: (url: string) => Promise<boolean>;
+  onForceSync: () => Promise<boolean>;
+  onSetHaftarahLength: (name: string, verses: number) => void;
+  onDeleteHaftarahLength: (name: string) => void;
   onUpdateStudent: (updated: StudentProfile) => void;
   onAddStudent: (created: StudentProfile) => void;
   onDeleteStudent: (studentId: string) => void;
@@ -63,19 +83,52 @@ const SPECIAL_HAFTAROT = [
   'שבת הגדול',
 ];
 
+function startOfWeekSunday(dt: Date): Date {
+  const d = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  d.setDate(d.getDate() - d.getDay());
+  return d;
+}
+
+function addDays(dt: Date, days: number): Date {
+  const d = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
 export const TeacherView: React.FC<TeacherViewProps> = ({
   students,
+  haftarotMap,
+  gasUrl,
+  syncStatus,
+  syncErrorMessage,
+  lastSyncedAt,
+  onSaveGasUrl,
+  onForceSync,
+  onSetHaftarahLength,
+  onDeleteHaftarahLength,
   onUpdateStudent,
   onAddStudent,
   onDeleteStudent,
   onPreviewStudent,
 }) => {
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'table' | 'gantt'>('cards');
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [managingStudentId, setManagingStudentId] = useState<string | null>(null);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [showHaftarotModal, setShowHaftarotModal] = useState(false);
+  const [showDriveSyncModal, setShowDriveSyncModal] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewRecording, setPreviewRecording] = useState<RecordingItem | null>(null);
+
+  // Google Apps Script Setup Modal State
+  const [gasUrlInput, setGasUrlInput] = useState(gasUrl);
+  const [copiedGasScript, setCopiedGasScript] = useState(false);
+  const [isTestingGas, setIsTestingGas] = useState(false);
+  const [gasTestMessage, setGasTestMessage] = useState<string | null>(null);
+
+  // Haftarah Table Modal Form State
+  const [newHaftarahEntryName, setNewHaftarahEntryName] = useState('');
+  const [newHaftarahEntryVerses, setNewHaftarahEntryVerses] = useState(22);
 
   // Add Student Form State
   const [newName, setNewName] = useState('');
@@ -98,10 +151,31 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [singleExt, setSingleExt] = useState<'aac' | 'm4a' | 'mp3' | 'pdf'>('aac');
   const [localDataUrl, setLocalDataUrl] = useState<string | undefined>(undefined);
   const [localFileName, setLocalFileName] = useState('');
+  const [localMimeType, setLocalMimeType] = useState('audio/aac');
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
 
   const managingStudent = useMemo(
     () => students.find((s) => s.id === managingStudentId) || null,
     [students, managingStudentId]
+  );
+
+  // Live preview of computed start date & stats inside the "Add New Student" modal
+  const newStudentPreviewStats = useMemo(
+    () =>
+      calculateStudentStats({
+        id: 'preview',
+        name: newName,
+        parasha: newParasha,
+        haftarah: newHaftarah,
+        barMitzvahDate: newBarMitzvahDate,
+        parashaVerses: Number(newParashaVerses) || 0,
+        skippedVerses: Number(newSkippedVerses) || 0,
+        learnedParashaVerses: 0,
+        haftarahVerses: Number(newHaftarahVerses) || 0,
+        learnedHaftarahVerses: 0,
+        portions: [],
+      }),
+    [newName, newParasha, newHaftarah, newBarMitzvahDate, newParashaVerses, newSkippedVerses, newHaftarahVerses]
   );
 
   const openManageModal = (student: StudentProfile) => {
@@ -115,8 +189,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
   const buildStudentShareUrl = (student: StudentProfile) => {
     const baseUrl = window.location.origin + window.location.pathname;
-    const cfg = encodeStudentShareToken(student);
-    return `${baseUrl}?student=${encodeURIComponent(student.id)}&cfg=${cfg}`;
+    return `${baseUrl}?student=${encodeURIComponent(student.id)}`;
   };
 
   const handleCopyStudentLink = (student: StudentProfile) => {
@@ -132,7 +205,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  // Fetch files from a linked Google Drive folder and attach them to the student
+  const confirmAndDeleteStudent = (student: StudentProfile) => {
+    if (window.confirm(`האם להסיר את התלמיד "${student.name}" מרשימת המעקב?`)) {
+      onDeleteStudent(student.id);
+    }
+  };
+
   const fetchFilesFromDriveFolder = async (folderUrl: string): Promise<RecordingItem[]> => {
     const parsed = parseDriveUrl(folderUrl);
     if (!parsed || !parsed.isFolder) {
@@ -193,16 +271,61 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     }
   };
 
-  const handleAddSinglePortion = (e: React.FormEvent) => {
+  const handleAddSinglePortion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!managingStudent) return;
 
     const parsed = parseDriveUrl(singleLinkInput);
     if (!parsed && !localDataUrl) return;
 
+    const title =
+      localFileName || `${managingStudent.parasha} - ${singleAliyahLabel}.${singleExt}`;
+
+    // If teacher selected a local file AND Google Apps Script is connected, upload straight to Google Drive!
+    if (!parsed && localDataUrl && gasUrl) {
+      setIsUploadingAudio(true);
+      try {
+        const targetFolderParsed = managingStudent.driveFolderUrl
+          ? parseDriveUrl(managingStudent.driveFolderUrl)
+          : null;
+        const base64Data = localDataUrl.includes(',')
+          ? localDataUrl.split(',')[1]
+          : localDataUrl;
+        const uploaded = await uploadAudioToDrive(gasUrl, {
+          fileName: title,
+          mimeType: localMimeType,
+          base64Data,
+          folderId: targetFolderParsed?.isFolder ? targetFolderParsed.id : undefined,
+        });
+        if (uploaded.id) {
+          const drivePortion: RecordingItem = {
+            id: uploaded.id,
+            title: uploaded.name || title,
+            aliyah: singleAliyahLabel.trim() || 'עלייה',
+            category: singleCategory,
+            ext: singleExt,
+            resourceKey: null,
+            visible: true,
+            viewUrl:
+              uploaded.viewUrl ||
+              `https://drive.google.com/file/d/${uploaded.id}/view?usp=drivesdk`,
+          };
+          onUpdateStudent({
+            ...managingStudent,
+            portions: [...(managingStudent.portions || []), drivePortion],
+          });
+          setSingleLinkInput('');
+          setLocalDataUrl(undefined);
+          setLocalFileName('');
+          return;
+        }
+      } finally {
+        setIsUploadingAudio(false);
+      }
+    }
+
     const id = parsed ? parsed.id : `local-${Date.now()}`;
     const rk = parsed ? parsed.resourceKey : null;
-    const title = localFileName || `${managingStudent.parasha} - ${singleAliyahLabel}.${singleExt}`;
 
     const newPortion: RecordingItem = {
       id,
@@ -232,6 +355,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     setLocalFileName(file.name);
+    setLocalMimeType(file.type || 'audio/aac');
     const { aliyah, category, ext } = classifyFileTitle(file.name);
     setSingleAliyahLabel(aliyah);
     if (category === 'shabbat' || category === 'chol' || category === 'haftarah' || category === 'doc') {
@@ -300,12 +424,67 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       portions: initialPortions,
     };
 
+    if ((newHaftarah || newParasha).trim()) {
+      onSetHaftarahLength((newHaftarah || newParasha).trim(), Number(newHaftarahVerses) || 0);
+    }
+
     onAddStudent(created);
     setNewName('');
     setNewFolderUrl('');
     setShowAddStudentModal(false);
     openManageModal(created);
   };
+
+  // Compute Weekly Gantt Data
+  const ganttData = useMemo(() => {
+    const today = startOfWeekSunday(new Date());
+
+    const enriched = students
+      .map((student) => {
+        const stats = calculateStudentStats(student);
+        const bmDate = parseFlexibleDate(student.barMitzvahDate) || today;
+        // Parse DD/MM/YYYY from stats.estimatedStartDate
+        const parts = stats.estimatedStartDate.split('/');
+        const startDate =
+          parts.length === 3
+            ? new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]))
+            : addDays(bmDate, -stats.totalStudyWeeks * 7);
+
+        return {
+          student,
+          stats,
+          startWeek: startOfWeekSunday(startDate),
+          endWeek: startOfWeekSunday(bmDate),
+        };
+      })
+      .sort((a, b) => a.endWeek.getTime() - b.endWeek.getTime());
+
+    let minDate = addDays(today, -4 * 7);
+    let maxDate = addDays(today, 26 * 7);
+
+    for (const item of enriched) {
+      if (item.startWeek < minDate) {
+        minDate = item.startWeek;
+      }
+      if (item.endWeek > maxDate) {
+        maxDate = item.endWeek;
+      }
+    }
+
+    const earliestCap = addDays(today, -16 * 7);
+    if (minDate < earliestCap) {
+      minDate = earliestCap;
+    }
+
+    const weeks: Date[] = [];
+    let cur = new Date(minDate);
+    while (cur <= maxDate && weeks.length < 80) {
+      weeks.push(new Date(cur));
+      cur = addDays(cur, 7);
+    }
+
+    return { today, weeks, rows: enriched };
+  }, [students]);
 
   return (
     <div className="min-h-screen bg-slate-100 pb-36" dir="rtl">
@@ -321,12 +500,63 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 ניהול תלמידים – קריאה בתורה
               </h1>
               <p className="text-xs text-slate-400">
-                מעקב פסוקים ושבועות וקישור הקלטות מ-Google Drive לכל תלמיד
+                מעקב פסוקים, תאריכי התחלה, תרשים גאנט שבועי וניהול הקלטות לכל תלמיד
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Google Drive Cloud Save Button / Status */}
+            <button
+              type="button"
+              onClick={() => {
+                setGasUrlInput(gasUrl);
+                setGasTestMessage(null);
+                setShowDriveSyncModal(true);
+              }}
+              className={`px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 transition ${
+                syncStatus === 'saved'
+                  ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300 hover:bg-emerald-900'
+                  : syncStatus === 'saving'
+                  ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
+                  : syncStatus === 'error'
+                  ? 'bg-rose-950 border-rose-700 text-rose-300 hover:bg-rose-900'
+                  : 'bg-amber-500/20 border-amber-400/40 text-amber-200 hover:bg-amber-500/30'
+              }`}
+              title="הגדרת שמירה אוטומטית ב-Google Drive (באמצעות Google Apps Script)"
+            >
+              {syncStatus === 'saving' ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                  <span>שומר ב-Drive...</span>
+                </>
+              ) : syncStatus === 'saved' ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span>נשמר ב-Drive</span>
+                </>
+              ) : syncStatus === 'error' ? (
+                <>
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                  <span>שגיאת סנכרון Drive</span>
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-4 h-4 text-amber-300" />
+                  <span>חבר שמירה ל-Drive</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowHaftarotModal(true)}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-bold flex items-center gap-1.5 transition"
+            >
+              <ScrollText className="w-4 h-4 text-indigo-400" />
+              <span>אורכי הפטרות ({Object.keys(haftarotMap).length})</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowAddStudentModal(true)}
@@ -341,7 +571,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
       {/* Toolbar */}
       <div className="max-w-7xl mx-auto px-4 pt-4 pb-2 flex flex-wrap items-center justify-between gap-3">
-        <div className="bg-white border border-slate-200 p-1 rounded-xl flex items-center gap-1 shadow-2xs">
+        <div className="bg-white border border-slate-200 p-1 rounded-xl flex flex-wrap items-center gap-1 shadow-2xs">
           <button
             type="button"
             onClick={() => setViewMode('cards')}
@@ -353,6 +583,18 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           >
             <LayoutGrid className="w-3.5 h-3.5" />
             <span>כרטיסים</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('gantt')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition ${
+              viewMode === 'gantt'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <CalendarRange className="w-3.5 h-3.5" />
+            <span>גאנט שבועי</span>
           </button>
           <button
             type="button"
@@ -392,7 +634,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-3">
-        {viewMode === 'cards' ? (
+        {viewMode === 'cards' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {students.map((student) => {
               const stats = calculateStudentStats(student);
@@ -421,12 +663,46 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                         </div>
                       </div>
 
-                      <div className="text-left shrink-0">
+                      <div className="flex items-start gap-1.5 shrink-0">
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-extrabold bg-indigo-50 text-indigo-800 border border-indigo-100">
                           {stats.weeksToBarMitzvah} שבועות
                         </span>
-                        <div className="text-[11px] text-slate-500 mt-1">
+                        <button
+                          type="button"
+                          onClick={() => confirmAndDeleteStudent(student)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                          title={`מחק את התלמיד ${student.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Prominent Computed Start Date & Bar Mitzvah Date Banner */}
+                    <div className="grid grid-cols-2 gap-2 bg-indigo-50/50 border border-indigo-100 rounded-xl p-2.5 mb-3 text-xs">
+                      <div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-indigo-500" />
+                          <span>התחלה משוערת:</span>
+                        </div>
+                        <div className="font-extrabold text-indigo-950 text-sm mt-0.5">
+                          {stats.estimatedStartDate}
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {stats.totalStudyWeeks} שבועות ({stats.totalStudyMonths} חודשים)
+                        </div>
+                      </div>
+
+                      <div className="border-r border-indigo-100 pr-2.5">
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-indigo-500" />
+                          <span>תאריך בר מצווה:</span>
+                        </div>
+                        <div className="font-extrabold text-slate-900 text-sm mt-0.5">
                           {formatDateIL(student.barMitzvahDate)}
+                        </div>
+                        <div className="text-[10px] text-indigo-700 font-semibold">
+                          עוד {stats.weeksToBarMitzvah} שבועות
                         </div>
                       </div>
                     </div>
@@ -613,7 +889,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
                       <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500">
                         <span>
-                          התחלה משוערת: <strong>{stats.estimatedStartDate}</strong> ({stats.totalStudyMonths} חודשים)
+                          דילוג: <strong>{student.skippedVerses}</strong> מתוך {student.parashaVerses} פס׳
                         </span>
                         <button
                           type="button"
@@ -664,10 +940,31 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                                 onUpdateStudent({
                                   ...student,
                                   haftarah: h,
-                                  haftarahVerses: lookupHaftarahVerses(h),
+                                  haftarahVerses: lookupHaftarahVerses(h, haftarotMap),
                                 });
                               }}
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] text-slate-500 mb-0.5">
+                              פסוקים בהפטרה
+                            </label>
+                            <input
+                              type="number"
+                              value={student.haftarahVerses}
+                              onChange={(e) => {
+                                const v = Math.max(0, Number(e.target.value) || 0);
+                                onUpdateStudent({
+                                  ...student,
+                                  haftarahVerses: v,
+                                });
+                                if (student.haftarah.trim()) {
+                                  onSetHaftarahLength(student.haftarah.trim(), v);
+                                }
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold"
                             />
                           </div>
 
@@ -703,21 +1000,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                               }
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold"
                             />
-                          </div>
-
-                          <div className="col-span-2 flex justify-end pt-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (window.confirm(`למחוק את התלמיד ${student.name}?`)) {
-                                  onDeleteStudent(student.id);
-                                }
-                              }}
-                              className="text-rose-600 hover:bg-rose-50 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              <span>מחק תלמיד</span>
-                            </button>
                           </div>
                         </div>
                       )}
@@ -780,8 +1062,192 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               );
             })}
           </div>
-        ) : (
-          /* FULL SPREADSHEET TABLE VIEW */
+        )}
+
+        {/* WEEKLY GANTT VIEW */}
+        {viewMode === 'gantt' && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50">
+              <div>
+                <h2 className="font-extrabold text-slate-900 text-base">
+                  תרשים גאנט שבועי – תלמידים פעילים ותקופות לימוד
+                </h2>
+                <p className="text-xs text-slate-500">
+                  מציג לכל תלמיד את טווח השבועות מתאריך ההתחלה המשוער ועד תאריך בר המצווה, כולל עומס תלמידים בכל שבוע
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-xs bg-slate-400 inline-block" />
+                  <span>שבועות שעברו</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-xs bg-indigo-600 inline-block" />
+                  <span>שבועות לימוד פעילים</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-xs bg-emerald-500 inline-block" />
+                  <span>שבועות עודפים / חזרה</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-xs bg-amber-400 inline-block" />
+                  <span>שבוע בר מצווה</span>
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-900 text-white">
+                    <th className="sticky right-0 z-20 bg-slate-900 p-3 text-right min-w-[210px] border-l border-slate-700">
+                      תלמיד / פרשה / תאריכים
+                    </th>
+                    {ganttData.weeks.map((wk) => {
+                      const isCurrentWeek = wk.getTime() === ganttData.today.getTime();
+                      const d = String(wk.getDate()).padStart(2, '0');
+                      const m = String(wk.getMonth() + 1).padStart(2, '0');
+                      return (
+                        <th
+                          key={wk.toISOString()}
+                          className={`p-1.5 text-center font-mono text-[10px] min-w-[42px] border-l border-slate-800 ${
+                            isCurrentWeek
+                              ? 'bg-amber-500 text-slate-950 font-extrabold'
+                              : ''
+                          }`}
+                          title={`שבוע המתחיל ב-${formatDateIL(wk)}`}
+                        >
+                          <div>{d}/{m}</div>
+                          {isCurrentWeek && (
+                            <div className="text-[9px] leading-tight">השבוע</div>
+                          )}
+                        </th>
+                      );
+                    })}
+                  </tr>
+
+                  {/* Weekly Active Students Load Row */}
+                  <tr className="bg-slate-100 border-b border-slate-200 font-bold text-slate-700">
+                    <td className="sticky right-0 z-20 bg-slate-100 px-3 py-2 border-l border-slate-200">
+                      סה"כ תלמידים פעילים בשבוע
+                    </td>
+                    {ganttData.weeks.map((wk) => {
+                      const t = wk.getTime();
+                      const activeCount = ganttData.rows.filter(
+                        (r) => t >= r.startWeek.getTime() && t <= r.endWeek.getTime()
+                      ).length;
+                      const isCurrentWeek = t === ganttData.today.getTime();
+                      return (
+                        <td
+                          key={wk.toISOString()}
+                          className={`p-1 text-center border-l border-slate-200 ${
+                            isCurrentWeek ? 'bg-amber-50 font-extrabold text-amber-900' : ''
+                          }`}
+                        >
+                          {activeCount > 0 ? (
+                            <span
+                              className={`inline-block w-5 h-5 leading-5 rounded-full text-[10px] ${
+                                activeCount >= 5
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : activeCount >= 3
+                                  ? 'bg-indigo-100 text-indigo-800'
+                                  : 'bg-emerald-100 text-emerald-800'
+                              }`}
+                            >
+                              {activeCount}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-slate-200">
+                  {ganttData.rows.map(({ student, stats, startWeek, endWeek }) => {
+                    return (
+                      <tr key={student.id} className="hover:bg-slate-50/80">
+                        <td className="sticky right-0 z-10 bg-white px-3 py-2.5 border-l border-slate-200 shadow-[2px_0_5px_rgba(0,0,0,0.03)]">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-extrabold text-slate-900">
+                              {student.name}
+                            </span>
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                              {student.parasha}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-500 mt-0.5 flex items-center justify-between">
+                            <span>
+                              התחלה: <strong>{stats.estimatedStartDate}</strong>
+                            </span>
+                            <span>
+                              בר מצווה: <strong>{formatDateIL(student.barMitzvahDate)}</strong>
+                            </span>
+                          </div>
+                        </td>
+
+                        {ganttData.weeks.map((wk) => {
+                          const t = wk.getTime();
+                          const todayTime = ganttData.today.getTime();
+                          const isCurrentWeek = t === todayTime;
+                          const inWindow =
+                            t >= startWeek.getTime() && t <= endWeek.getTime();
+                          const isBmWeek = t === endWeek.getTime();
+                          const isPast = t < todayTime;
+
+                          const weeksBeforeBm = Math.round(
+                            (endWeek.getTime() - t) / (7 * 24 * 3600 * 1000)
+                          );
+                          const isBufferWeek =
+                            !isPast &&
+                            !isBmWeek &&
+                            stats.spareWeeks > 0 &&
+                            weeksBeforeBm <= stats.spareWeeks;
+
+                          let barClass = '';
+                          if (inWindow) {
+                            if (isBmWeek) {
+                              barClass = 'bg-amber-400 text-slate-950 font-extrabold';
+                            } else if (isPast) {
+                              barClass = 'bg-slate-400/80 text-white';
+                            } else if (isBufferWeek) {
+                              barClass = 'bg-emerald-500 text-white';
+                            } else {
+                              barClass = 'bg-indigo-600 text-white';
+                            }
+                          }
+
+                          return (
+                            <td
+                              key={wk.toISOString()}
+                              className={`p-1 text-center border-l border-slate-100 ${
+                                isCurrentWeek ? 'bg-amber-50/70' : ''
+                              }`}
+                            >
+                              {inWindow && (
+                                <div
+                                  className={`h-6 rounded-md flex items-center justify-center text-[10px] shadow-2xs ${barClass}`}
+                                  title={`${student.name} (${student.parasha}) - שבוע ${formatDateIL(wk)}`}
+                                >
+                                  {isBmWeek ? '★' : ''}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* FULL SPREADSHEET TABLE VIEW */}
+        {viewMode === 'table' && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-x-auto">
             <table className="w-full text-xs text-right border-collapse">
               <thead>
@@ -789,6 +1255,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <th className="p-3 whitespace-nowrap">שם התלמיד</th>
                   <th className="p-3 whitespace-nowrap">פרשה</th>
                   <th className="p-3 whitespace-nowrap">הפטרה</th>
+                  <th className="p-3 whitespace-nowrap bg-indigo-950">התחלה משוערת</th>
                   <th className="p-3 whitespace-nowrap">תאריך בר מצווה</th>
                   <th className="p-3 whitespace-nowrap">פס׳ בפרשה</th>
                   <th className="p-3 whitespace-nowrap">פס׳ שנדלג</th>
@@ -802,10 +1269,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <th className="p-3 whitespace-nowrap">שבועות לבר מצווה</th>
                   <th className="p-3 whitespace-nowrap">שיעורים ללימוד</th>
                   <th className="p-3 whitespace-nowrap">שבועות עודפים</th>
-                  <th className="p-3 whitespace-nowrap">התחלה משוערת</th>
                   <th className="p-3 whitespace-nowrap">שבועות כולל</th>
                   <th className="p-3 whitespace-nowrap">חודשי לימוד</th>
-                  <th className="p-3 whitespace-nowrap">הקלטות וקישור</th>
+                  <th className="p-3 whitespace-nowrap">פעולות</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -821,6 +1287,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       </td>
                       <td className="p-2.5 whitespace-nowrap">{student.parasha}</td>
                       <td className="p-2.5 whitespace-nowrap">{student.haftarah}</td>
+                      <td className="p-2.5 text-center font-extrabold text-indigo-800 bg-indigo-50/40 whitespace-nowrap">
+                        {st.estimatedStartDate}
+                      </td>
                       <td className="p-2.5 whitespace-nowrap">
                         {formatDateIL(student.barMitzvahDate)}
                       </td>
@@ -900,9 +1369,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       >
                         {st.spareWeeks}
                       </td>
-                      <td className="p-2.5 text-center whitespace-nowrap">
-                        {st.estimatedStartDate}
-                      </td>
                       <td className="p-2.5 text-center">{st.totalStudyWeeks}</td>
                       <td className="p-2.5 text-center">{st.totalStudyMonths}</td>
                       <td className="p-2.5 whitespace-nowrap">
@@ -920,6 +1386,14 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                             className="px-2 py-1 rounded border border-slate-200 hover:bg-slate-100"
                           >
                             {copiedId === student.id ? 'הועתק' : 'קישור'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => confirmAndDeleteStudent(student)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                            title="מחק תלמיד"
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </td>
@@ -991,14 +1465,16 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 )}
               </div>
 
-              {/* Option B: Add a Specific Drive File Link or Local Audio File */}
+              {/* Option B: Add a Specific Drive File Link or Upload Audio File */}
               <form
                 onSubmit={handleAddSinglePortion}
                 className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5"
               >
                 <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <LinkIcon className="w-4 h-4 text-emerald-600" />
-                  <span>או הוסף קובץ הקלטה בודד (קישור ל-Drive או העלאה מהמכשיר):</span>
+                  <span>
+                    או הוסף קובץ הקלטה בודד (קישור ל-Drive או העלאת קובץ ישירות ל-Drive שלך):
+                  </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -1068,11 +1544,20 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   </label>
                   <button
                     type="submit"
-                    disabled={!singleLinkInput.trim() && !localDataUrl}
+                    disabled={isUploadingAudio || (!singleLinkInput.trim() && !localDataUrl)}
                     className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1"
                   >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>הוסף</span>
+                    {isUploadingAudio ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>מעלה ל-Drive...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>הוסף</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </form>
@@ -1283,7 +1768,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       setNewParasha(p);
                       setNewHaftarah(p);
                       setNewParashaVerses(lookupParashaVerses(p));
-                      setNewHaftarahVerses(lookupHaftarahVerses(p));
+                      setNewHaftarahVerses(lookupHaftarahVerses(p, haftarotMap));
                     }}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   >
@@ -1305,15 +1790,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     value={newHaftarah}
                     onChange={(e) => {
                       setNewHaftarah(e.target.value);
-                      setNewHaftarahVerses(lookupHaftarahVerses(e.target.value));
+                      setNewHaftarahVerses(lookupHaftarahVerses(e.target.value, haftarotMap));
                     }}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />
                   <datalist id="haftarot-options">
-                    {Object.keys(HAFTAROT_VERSE_COUNTS).map((h) => (
+                    {Object.keys(haftarotMap).map((h) => (
                       <option key={h} value={h} />
                     ))}
-                    {SPECIAL_HAFTAROT.map((h) => (
+                    {SPECIAL_HAFTAROT.filter((h) => !(h in haftarotMap)).map((h) => (
                       <option key={h} value={h} />
                     ))}
                   </datalist>
@@ -1373,6 +1858,19 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </div>
               </div>
 
+              {/* Computed Start Date Preview inside Add Modal */}
+              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-slate-600">תאריך התחלה משוער מחושב: </span>
+                  <strong className="text-indigo-950 text-sm">
+                    {newStudentPreviewStats.estimatedStartDate}
+                  </strong>
+                </div>
+                <span className="text-indigo-700 font-semibold">
+                  סה"כ {newStudentPreviewStats.totalVerses} פס׳ ({newStudentPreviewStats.totalStudyWeeks} שבועות)
+                </span>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   קישור לתיקיית הפרשה ב-Google Drive (אופציונלי – ניתן להוסיף גם אחר כך)
@@ -1404,6 +1902,340 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* MODAL 3: MANAGE HAFTARAH LENGTHS TABLE */}
+      {showHaftarotModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+              <div>
+                <h3 className="font-extrabold text-lg">טבלת אורכי הפטרות (מספר פסוקים)</h3>
+                <p className="text-xs text-slate-300">
+                  הוסף או עדכן את מספר הפסוקים של כל הפטרה לחישוב אוטומטי
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHaftarotModal(false)}
+                className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {/* Add / Update Haftarah Form */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newHaftarahEntryName.trim()) return;
+                  onSetHaftarahLength(
+                    newHaftarahEntryName.trim(),
+                    Math.max(0, Number(newHaftarahEntryVerses) || 0)
+                  );
+                  setNewHaftarahEntryName('');
+                }}
+                className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex flex-wrap items-end gap-2"
+              >
+                <div className="flex-1 min-w-[160px]">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    שם ההפטרה / הפרשה
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    list="all-parashot-haftarot"
+                    value={newHaftarahEntryName}
+                    onChange={(e) => setNewHaftarahEntryName(e.target.value)}
+                    placeholder="למשל: נח / שמות א / מחר חודש"
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-semibold"
+                  />
+                  <datalist id="all-parashot-haftarot">
+                    {PARASHA_META_LIST.map((pm) => (
+                      <option key={pm.name} value={pm.name} />
+                    ))}
+                    {SPECIAL_HAFTAROT.map((sh) => (
+                      <option key={sh} value={sh} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div className="w-28">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    מספר פסוקים
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    required
+                    value={newHaftarahEntryVerses}
+                    onChange={(e) =>
+                      setNewHaftarahEntryVerses(Math.max(0, Number(e.target.value) || 0))
+                    }
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold text-center"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1 h-[34px]"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>שמור</span>
+                </button>
+              </form>
+
+              {/* Existing Haftarot List */}
+              <div className="divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden">
+                {Object.entries(haftarotMap).map(([name, verses]) => (
+                  <div
+                    key={name}
+                    className="px-4 py-2.5 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <span className="font-bold text-slate-900">{name}</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        value={verses}
+                        onChange={(e) =>
+                          onSetHaftarahLength(
+                            name,
+                            Math.max(0, Number(e.target.value) || 0)
+                          )
+                        }
+                        className="w-16 text-center font-bold border border-slate-200 rounded-lg py-1"
+                      />
+                      <span className="text-slate-500">פסוקים</span>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteHaftarahLength(name)}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                        title="מחק מהטבלה"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowHaftarotModal(false)}
+                className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+              >
+                סגור
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: GOOGLE DRIVE CLOUD SYNC SETUP (GOOGLE APPS SCRIPT WEB APP) */}
+      {showDriveSyncModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
+          <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <CloudUpload className="w-5 h-5 text-indigo-400" />
+                <div>
+                  <h3 className="font-extrabold text-lg">
+                    שמירה אוטומטית ב-Google Drive (Apps Script)
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    שומר את כל נתוני התלמידים, ההתקדמות וההפטרות בקובץ <code className="text-indigo-300">torah-app-data.json</code> בתיקיית ה-Drive שלך
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDriveSyncModal(false)}
+                className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1 text-xs text-slate-700">
+              {/* Step-by-step instructions */}
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 space-y-2">
+                <div className="font-extrabold text-indigo-950 text-sm mb-1">
+                  איך לחבר את האפליקציה ל-Google Drive ב-2 דקות (חד-פעמי):
+                </div>
+                <ol className="list-decimal list-inside space-y-1.5 text-slate-700 leading-relaxed">
+                  <li>
+                    לחץ על הכפתור למטה <strong>"העתק קוד Google Apps Script"</strong>.
+                  </li>
+                  <li>
+                    פתח את{' '}
+                    <a
+                      href="https://script.google.com/home/start"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 font-bold underline"
+                    >
+                      script.google.com
+                    </a>{' '}
+                    ולחץ על <strong>New project (פרויקט חדש)</strong>.
+                  </li>
+                  <li>
+                    מחק את הקוד הקיים, הדבק את הקוד שהעתקת ולחץ על סמל השמירה (💾).
+                  </li>
+                  <li>
+                    לחץ למעלה על <strong>Deploy &rarr; New deployment</strong>, בחר סוג{' '}
+                    <strong>Web app</strong>, הגדר:
+                    <ul className="list-disc list-inside mr-4 mt-1 text-slate-600">
+                      <li>
+                        <strong>Execute as:</strong> Me (אני)
+                      </li>
+                      <li>
+                        <strong>Who has access:</strong> Anyone (כל אחד)
+                      </li>
+                    </ul>
+                  </li>
+                  <li>
+                    אשר הרשאות (Authorize) והעתק את כתובת ה-<strong>Web app URL</strong> (מסתיים ב-<code>/exec</code>) אל השדה למטה:
+                  </li>
+                </ol>
+
+                <div className="pt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
+                      setCopiedGasScript(true);
+                      setTimeout(() => setCopiedGasScript(false), 3000);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 shadow-2xs transition"
+                  >
+                    {copiedGasScript ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>הקוד הועתק ללוח!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4" />
+                        <span>העתק קוד Google Apps Script</span>
+                      </>
+                    )}
+                  </button>
+
+                  <a
+                    href="https://script.google.com/home/start"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3.5 py-2 rounded-xl bg-white border border-indigo-200 text-indigo-700 font-bold flex items-center gap-1 hover:bg-indigo-50"
+                  >
+                    <span>פתח את Google Apps Script</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+
+              {/* Web App URL Input */}
+              <div className="space-y-2">
+                <label className="block font-bold text-slate-800 text-xs">
+                  כתובת ה-Web App URL מ-Google Apps Script:
+                </label>
+                <input
+                  type="url"
+                  value={gasUrlInput}
+                  onChange={(e) => setGasUrlInput(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono"
+                  dir="ltr"
+                />
+              </div>
+
+              {gasTestMessage && (
+                <div
+                  className={`p-3 rounded-xl font-bold ${
+                    gasTestMessage.includes('בהצלחה')
+                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border border-rose-200'
+                  }`}
+                >
+                  {gasTestMessage}
+                </div>
+              )}
+
+              {syncErrorMessage && (
+                <div className="p-3 rounded-xl bg-rose-50 text-rose-800 border border-rose-200 font-semibold">
+                  {syncErrorMessage}
+                </div>
+              )}
+
+              {lastSyncedAt && (
+                <div className="text-[11px] text-slate-500">
+                  סנכרון אחרון ל-Drive:{' '}
+                  <strong>{new Date(lastSyncedAt).toLocaleString('he-IL')}</strong>
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+              {gasUrl && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsTestingGas(true);
+                    setGasTestMessage(null);
+                    const ok = await onForceSync();
+                    setIsTestingGas(false);
+                    setGasTestMessage(
+                      ok
+                        ? 'הנתונים נשמרו ב-Google Drive בהצלחה! (קובץ torah-app-data.json עודכן)'
+                        : 'שגיאה בשמירה ל-Drive – בדוק שהכתובת מסתיימת ב-/exec ושהגישה מוגדרת ל-Anyone'
+                    );
+                  }}
+                  disabled={isTestingGas}
+                  className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isTestingGas ? 'animate-spin' : ''}`} />
+                  <span>סנכרן עכשיו</span>
+                </button>
+              )}
+
+              <div className="flex items-center gap-2 mr-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowDriveSyncModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200"
+                >
+                  סגור
+                </button>
+                <button
+                  type="button"
+                  disabled={isTestingGas}
+                  onClick={async () => {
+                    setIsTestingGas(true);
+                    setGasTestMessage(null);
+                    const ok = await onSaveGasUrl(gasUrlInput);
+                    setIsTestingGas(false);
+                    if (!gasUrlInput.trim()) {
+                      setShowDriveSyncModal(false);
+                      return;
+                    }
+                    setGasTestMessage(
+                      ok
+                        ? 'חובר ונשמר ב-Google Drive בהצלחה! מעכשיו כל שינוי יישמר אוטומטית.'
+                        : 'לא הצלחנו לשמור בכתובת הזו. ודא שהכתובת מסתיימת ב-/exec ושהרשאת הגישה היא Anyone.'
+                    );
+                  }}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5"
+                >
+                  {isTestingGas && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>שמור וסנכרן ל-Drive</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

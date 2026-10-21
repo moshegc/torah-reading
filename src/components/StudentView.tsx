@@ -282,10 +282,11 @@ export const StudentView: React.FC<StudentViewProps> = ({
                 </h3>
                 <div className="space-y-2">
                   {parashaDocs.map((doc) => (
-                    <button
+                    <a
                       key={doc.id}
-                      type="button"
-                      onClick={() => setPreviewDoc(doc)}
+                      href={doc.localUrl || doc.viewUrl}
+                      target="_blank"
+                      rel="noreferrer"
                       className="w-full text-right p-3.5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -296,10 +297,11 @@ export const StudentView: React.FC<StudentViewProps> = ({
                           {doc.aliyah}
                         </div>
                       </div>
-                      <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0">
-                        פתיחה
+                      <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1">
+                        <span>פתיחה</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
                       </span>
-                    </button>
+                    </a>
                   ))}
                 </div>
               </div>
@@ -491,6 +493,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               <div className="space-y-2.5">
                 {GENERAL_DOC_ITEMS.map((doc) => {
                   const isPdf = doc.ext === 'pdf';
+                  const directHref = doc.localUrl || doc.viewUrl;
                   return (
                     <div
                       key={doc.id}
@@ -521,13 +524,25 @@ export const StudentView: React.FC<StudentViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewDoc(doc)}
-                          className="text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition"
-                        >
-                          הצג
-                        </button>
+                        {isPdf ? (
+                          <a
+                            href={directHref}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition flex items-center gap-1"
+                          >
+                            <span>פתח מסמך</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewDoc(doc)}
+                            className="text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-xl transition"
+                          >
+                            הצג תמונה
+                          </button>
+                        )}
                         <a
                           href={doc.viewUrl}
                           target="_blank"
@@ -557,12 +572,21 @@ export const StudentView: React.FC<StudentViewProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <a
-                  href={previewDoc.viewUrl}
+                  href={previewDoc.localUrl || previewDoc.viewUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="text-xs font-semibold text-indigo-600 hover:underline flex items-center gap-1 px-2 py-1"
                 >
-                  <span>פתח ב-Drive</span>
+                  <span>פתח בחלון מלא</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+                <a
+                  href={previewDoc.viewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs font-semibold text-slate-500 hover:underline flex items-center gap-1 px-2 py-1"
+                >
+                  <span>Drive</span>
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
                 <button
@@ -578,13 +602,13 @@ export const StudentView: React.FC<StudentViewProps> = ({
             <div className="flex-1 overflow-auto bg-slate-100 p-2 flex items-center justify-center min-h-[60vh]">
               {previewDoc.ext === 'pdf' ? (
                 <iframe
-                  src={`https://drive.google.com/file/d/${previewDoc.id}/preview`}
+                  src={previewDoc.localUrl || previewDoc.viewUrl}
                   title={previewDoc.aliyah}
                   className="w-full h-[72vh] rounded-xl border-0 bg-white"
                 />
               ) : (
                 <img
-                  src={getMediaStreamUrl(previewDoc)}
+                  src={previewDoc.localUrl || getMediaStreamUrl(previewDoc)}
                   alt={previewDoc.aliyah}
                   className="max-w-full max-h-[75vh] object-contain rounded-xl shadow-xs"
                 />

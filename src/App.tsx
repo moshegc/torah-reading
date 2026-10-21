@@ -1,22 +1,37 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Lock, BookOpen, ShieldCheck, ArrowLeft } from 'lucide-react';
 import {
   STUDENTS as INITIAL_STUDENTS,
+  HAFTAROT_VERSE_COUNTS as INITIAL_HAFTAROT,
+  DEFAULT_GAS_WEBAPP_URL,
   StudentProfile,
 } from './data/driveCatalog';
 import { decodeStudentShareToken } from './utils/trackerCalculations';
+import { fetchCloudAppData, saveCloudAppData } from './utils/cloudSync';
 import { StudentView } from './components/StudentView';
 import { TeacherView } from './components/TeacherView';
 
 const STORAGE_KEY_STUDENTS = 'torah_trainer_students_v3';
+const STORAGE_KEY_HAFTAROT = 'torah_trainer_haftarot_v1';
 const STORAGE_KEY_TEACHER_AUTH = 'torah_trainer_teacher_unlocked';
+const STORAGE_KEY_GAS_URL = 'torah_trainer_gas_url_v1';
 const DEFAULT_TEACHER_PIN = '1234';
+
+export type DriveSyncStatus = 'unconfigured' | 'idle' | 'saving' | 'saved' | 'error';
 
 export default function App() {
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const studentParam = urlParams.get('student');
   const cfgParam = urlParams.get('cfg');
   const teacherParam = urlParams.get('teacher');
+
+  const [gasUrl, setGasUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem(STORAGE_KEY_GAS_URL) || DEFAULT_GAS_WEBAPP_URL || '';
+    } catch {
+      return DEFAULT_GAS_WEBAPP_URL || '';
+    }
+  });
 
   const [students, setStudents] = useState<StudentProfile[]>(() => {
     try {
@@ -31,6 +46,27 @@ export default function App() {
     return INITIAL_STUDENTS;
   });
 
+  const [haftarotMap, setHaftarotMap] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_HAFTAROT);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return { ...INITIAL_HAFTAROT, ...parsed };
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return INITIAL_HAFTAROT;
+  });
+
+  const [syncStatus, setSyncStatus] = useState<DriveSyncStatus>(() =>
+    gasUrl ? 'idle' : 'unconfigured'
+  );
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+
   const [isTeacherUnlocked, setIsTeacherUnlocked] = useState<boolean>(() => {
     return localStorage.getItem(STORAGE_KEY_TEACHER_AUTH) === 'true';
   });
@@ -40,6 +76,14 @@ export default function App() {
   const [showPinModal, setShowPinModal] = useState(Boolean(teacherParam && !isTeacherUnlocked));
   const [previewStudent, setPreviewStudent] = useState<StudentProfile | null>(null);
 
+  const studentsRef = useRef(students);
+  studentsRef.current = students;
+  const haftarotRef = useRef(haftarotMap);
+  haftarotRef.current = haftarotMap;
+  const gasUrlRef = useRef(gasUrl);
+  gasUrlRef.current = gasUrl;
+
+  // Save to localStorage whenever state changes
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_STUDENTS, JSON.stringify(students));
@@ -48,16 +92,146 @@ export default function App() {
     }
   }, [students]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_HAFTAROT, JSON.stringify(haftarotMap));
+    } catch {
+      // ignore quota errors
+    }
+  }, [haftarotMap]);
+
+  // On startup, load latest data from Google Drive (via GAS Web App or public Drive folder `/api/drive-data`)
+  useEffect(() => {
+    let cancelled = false;
+    async function loadFromDrive() {
+      try {
+        // 1. If GAS URL is configured, try reading from it first
+        if (gasUrlRef.current) {
+          const cloudRes = await fetchCloudAppData(gasUrlRef.current);
+          const cloudData = cloudRes.data;
+          if (!cancelled && cloudData && Array.isArray(cloudData.students) && cloudData.students.length > 0) {
+            setStudents(cloudData.students);
+            if (cloudData.haftarotMap) {
+              setHaftarotMap((prev) => ({ ...prev, ...cloudData.haftarotMap }));
+            }
+            setSyncStatus('saved');
+            if (cloudData.updatedAt) setLastSyncedAt(cloudData.updatedAt);
+            return;
+          }
+        }
+
+        // 2. Fallback: read `torah-app-data.json` directly from the public Google Drive folder via `/api/drive-data`
+        // This works for all students on any mobile phone without needing the GAS URL!
+        const res = await fetch('/api/drive-data');
+        if (res.ok) {
+          const json = await res.json();
+          if (!cancelled && json.found && json.data && Array.isArray(json.data.students) && json.data.students.length > 0) {
+            setStudents(json.data.students);
+            if (json.data.haftarotMap) {
+              setHaftarotMap((prev) => ({ ...prev, ...json.data.haftarotMap }));
+            }
+            if (json.data.updatedAt) setLastSyncedAt(json.data.updatedAt);
+            if (gasUrlRef.current) setSyncStatus('saved');
+          }
+        }
+      } catch {
+        // Offline or not yet created in Drive - use local/initial data
+      }
+    }
+    loadFromDrive();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Push updated data to Google Drive via Google Apps Script Web App
+  const syncToDrive = useCallback(
+    async (
+      nextStudents: StudentProfile[],
+      nextHaftarot: Record<string, number>,
+      overrideGasUrl?: string
+    ) => {
+      const targetUrl = (overrideGasUrl ?? gasUrlRef.current).trim();
+      if (!targetUrl) {
+        setSyncStatus('unconfigured');
+        return false;
+      }
+
+      setSyncStatus('saving');
+      setSyncErrorMessage(null);
+      try {
+        const result = await saveCloudAppData(targetUrl, {
+          students: nextStudents,
+          haftarotMap: nextHaftarot,
+        });
+        setSyncStatus('saved');
+        setLastSyncedAt(result.updatedAt);
+        return true;
+      } catch (err: any) {
+        setSyncStatus('error');
+        setSyncErrorMessage(err?.message || 'שגיאה בשמירה ל-Google Drive');
+        return false;
+      }
+    },
+    []
+  );
+
+  const handleSaveGasUrl = async (newUrl: string): Promise<boolean> => {
+    const clean = newUrl.trim();
+    setGasUrl(clean);
+    gasUrlRef.current = clean;
+    try {
+      localStorage.setItem(STORAGE_KEY_GAS_URL, clean);
+    } catch {
+      // ignore
+    }
+    if (!clean) {
+      setSyncStatus('unconfigured');
+      return false;
+    }
+    return await syncToDrive(studentsRef.current, haftarotRef.current, clean);
+  };
+
   const handleUpdateStudent = (updated: StudentProfile) => {
-    setStudents((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+    const nextStudents = studentsRef.current.map((s) =>
+      s.id === updated.id ? updated : s
+    );
+    setStudents(nextStudents);
+    syncToDrive(nextStudents, haftarotRef.current);
   };
 
   const handleAddStudent = (created: StudentProfile) => {
-    setStudents((prev) => [...prev, created]);
+    const nextStudents = [...studentsRef.current, created];
+    setStudents(nextStudents);
+    syncToDrive(nextStudents, haftarotRef.current);
   };
 
   const handleDeleteStudent = (studentId: string) => {
-    setStudents((prev) => prev.filter((s) => s.id !== studentId));
+    const nextStudents = studentsRef.current.filter((s) => s.id !== studentId);
+    setStudents(nextStudents);
+    syncToDrive(nextStudents, haftarotRef.current);
+  };
+
+  const handleSetHaftarahLength = (name: string, verses: number) => {
+    const clean = name.trim();
+    if (!clean) return;
+    const nextHaftarot = {
+      ...haftarotRef.current,
+      [clean]: verses,
+    };
+    const nextStudents = studentsRef.current.map((s) =>
+      s.haftarah.trim() === clean ? { ...s, haftarahVerses: verses } : s
+    );
+    setHaftarotMap(nextHaftarot);
+    setStudents(nextStudents);
+    syncToDrive(nextStudents, nextHaftarot);
+  };
+
+  const handleDeleteHaftarahLength = (name: string) => {
+    const nextHaftarot = { ...haftarotRef.current };
+    delete nextHaftarot[name];
+    setHaftarotMap(nextHaftarot);
+    syncToDrive(studentsRef.current, nextHaftarot);
   };
 
   const handleUnlockTeacher = (e: React.FormEvent) => {
@@ -83,16 +257,18 @@ export default function App() {
         s.name.trim() === studentParam.trim()
     );
 
-    if (found && decodedToken) {
-      return {
-        ...found,
-        ...Object.fromEntries(
-          Object.entries(decodedToken).filter(([_, v]) => v !== undefined)
-        ),
-      } as StudentProfile;
+    if (found) {
+      // If we have portions from cloud/state, prefer cloud state if it has portions, or merge with token
+      if (decodedToken && (!found.portions || found.portions.length === 0) && decodedToken.portions?.length) {
+        return {
+          ...found,
+          ...Object.fromEntries(
+            Object.entries(decodedToken).filter(([_, v]) => v !== undefined)
+          ),
+        } as StudentProfile;
+      }
+      return found;
     }
-
-    if (found) return found;
 
     if (decodedToken && decodedToken.name && decodedToken.parasha) {
       return {
@@ -199,6 +375,15 @@ export default function App() {
     return (
       <TeacherView
         students={students}
+        haftarotMap={haftarotMap}
+        gasUrl={gasUrl}
+        syncStatus={syncStatus}
+        syncErrorMessage={syncErrorMessage}
+        lastSyncedAt={lastSyncedAt}
+        onSaveGasUrl={handleSaveGasUrl}
+        onForceSync={() => syncToDrive(students, haftarotMap)}
+        onSetHaftarahLength={handleSetHaftarahLength}
+        onDeleteHaftarahLength={handleDeleteHaftarahLength}
         onUpdateStudent={handleUpdateStudent}
         onAddStudent={handleAddStudent}
         onDeleteStudent={handleDeleteStudent}

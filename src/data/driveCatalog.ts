@@ -6,6 +6,7 @@ export interface RecordingItem {
   ext: 'm4a' | 'aac' | 'mp3' | 'pdf' | 'png' | 'jpg' | 'jpeg' | 'webp';
   resourceKey?: string | null;
   viewUrl: string;
+  localUrl?: string; // Bundled static file path in /docs/...
   visible?: boolean; // For student-specific portions: whether the student can see it
   customAudioDataUrl?: string;
 }
@@ -50,6 +51,11 @@ export const ROOT_DRIVE_FOLDER_URL =
   'https://drive.google.com/drive/folders/0B6cVWsWs-t94Y2xzWnJaWlF0ZXc?resourcekey=0-74NHOzXbUQNLQVKYpF9CNQ';
 export const STUDENT_TRACKER_SHEET_URL =
   'https://docs.google.com/spreadsheets/d/1PiuEGpkxS66oqIyhltwVuVJ480ygBVuQviqkbbIoDZE/edit?usp=drivesdk';
+
+// Paste your deployed Google Apps Script Web App URL here (or set VITE_GAS_WEBAPP_URL in Vercel)
+// so all student devices automatically read torah-app-data.json from your Google Drive:
+export const DEFAULT_GAS_WEBAPP_URL =
+  (import.meta as any).env?.VITE_GAS_WEBAPP_URL || '';
 
 // 54 Parashot verse counts from the 'פרשות' tab in the tracking sheet
 export const PARASHA_META_LIST: ParashaMeta[] = [
@@ -185,7 +191,7 @@ export const GENERAL_AUDIO_ITEMS: RecordingItem[] = [
   },
 ];
 
-// General Study Docs (PDFs & Images)
+// General Study Docs (PDFs & Images bundled in /public/docs + Drive link)
 export const GENERAL_DOC_ITEMS: RecordingItem[] = [
   {
     id: '1ewMmc5-RU4-O374cnTusDtYJdN9c6s8f',
@@ -193,6 +199,7 @@ export const GENERAL_DOC_ITEMS: RecordingItem[] = [
     aliyah: 'טעמים - תווים',
     category: 'doc',
     ext: 'pdf',
+    localUrl: '/docs/teamim-tavim.pdf',
     viewUrl: 'https://drive.google.com/file/d/1ewMmc5-RU4-O374cnTusDtYJdN9c6s8f/view?usp=drivesdk',
   },
   {
@@ -201,6 +208,7 @@ export const GENERAL_DOC_ITEMS: RecordingItem[] = [
     aliyah: 'סימנים - כללי דקדוק',
     category: 'doc',
     ext: 'pdf',
+    localUrl: '/docs/simanim-dikduk.pdf',
     viewUrl: 'https://drive.google.com/file/d/1EaSAddjlNus1fpQcstvW1R0RzzNURUdc/view?usp=drivesdk',
   },
   {
@@ -210,6 +218,7 @@ export const GENERAL_DOC_ITEMS: RecordingItem[] = [
     category: 'doc',
     ext: 'jpg',
     resourceKey: '0-UGgSXlrXlrPCBFX2sGvijw',
+    localUrl: '/docs/teamim-simanim.jpg',
     viewUrl:
       'https://drive.google.com/file/d/0B6cVWsWs-t94cWtqNndlbERPNGc/view?usp=drivesdk&resourcekey=0-UGgSXlrXlrPCBFX2sGvijw',
   },
@@ -219,6 +228,7 @@ export const GENERAL_DOC_ITEMS: RecordingItem[] = [
     aliyah: 'מלעיל ומלרע',
     category: 'doc',
     ext: 'png',
+    localUrl: '/docs/mileil-milra.png',
     viewUrl: 'https://drive.google.com/file/d/1Cpj5sq5h0h3Ys58ICa-2d4VdG1IwJkZN/view?usp=drivesdk',
   },
   {
@@ -227,6 +237,7 @@ export const GENERAL_DOC_ITEMS: RecordingItem[] = [
     aliyah: 'מפיק בה"א',
     category: 'doc',
     ext: 'png',
+    localUrl: '/docs/mapik-behei.png',
     viewUrl: 'https://drive.google.com/file/d/1ClXFfB6izD-fL_PWSyvOeaZTCDJWST-j/view?usp=drivesdk',
   },
 ];
@@ -326,7 +337,7 @@ export const STUDENTS: StudentProfile[] = [
   },
   {
     id: 'brown',
-    name: 'בראון',
+    name: 'אילן בראון',
     parasha: 'משפטים',
     haftarah: 'מחר חודש',
     barMitzvahDate: '2027-02-06',
@@ -345,7 +356,7 @@ export const STUDENTS: StudentProfile[] = [
   },
   {
     id: 'gelbert',
-    name: 'גלברט',
+    name: 'יאיר גלברט',
     parasha: 'תזריע',
     haftarah: 'תזריע',
     barMitzvahDate: '2027-04-10',
