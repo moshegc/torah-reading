@@ -1,22 +1,143 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { Play, Pause, RotateCcw, RotateCw, Repeat, ExternalLink, Volume2, Loader2 } from 'lucide-react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  RotateCw,
+  Repeat,
+  ExternalLink,
+  Volume2,
+  Loader2,
+  Sliders,
+  Minus,
+  Plus,
+} from 'lucide-react';
 import { RecordingItem } from '../data/driveCatalog';
 import { getMediaStreamUrl } from '../utils/trackerCalculations';
+import {
+  loadStudentPreferences,
+  saveStudentPreferences,
+  formatPitchLabel,
+} from '../utils/studentPreferences';
+import {
+  createVoicePitchGraph,
+  VoicePitchGraph,
+} from '../utils/voicePitchShifter';
 
 interface AudioPlayerBarProps {
   recording: RecordingItem | null;
   parashaName?: string;
+  studentId?: string;
+  pitchShift?: number;
+  onPitchShiftChange?: (nextPitch: number) => void;
 }
 
-export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, parashaName }) => {
+export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
+  recording,
+  parashaName,
+  studentId,
+  pitchShift: controlledPitchShift,
+  onPitchShiftChange,
+}) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pitchGraphRef = useRef<VoicePitchGraph | null>(null);
+  const attachedAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const graphInitPromiseRef = useRef<Promise<VoicePitchGraph | null> | null>(null);
+
+  const initialPrefs = loadStudentPreferences(studentId);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isLooping, setIsLooping] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1.0);
+  const [isLooping, setIsLooping] = useState<boolean>(initialPrefs.isLooping);
+  const [playbackRate, setPlaybackRate] = useState<number>(initialPrefs.playbackRate);
+  const [internalPitchShift, setInternalPitchShift] = useState<number>(
+    initialPrefs.pitchShift
+  );
+  const [showPitchPanel, setShowPitchPanel] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const pitchShift =
+    controlledPitchShift !== undefined ? controlledPitchShift : internalPitchShift;
+
+  // Reload local browser preferences when studentId changes
+  useEffect(() => {
+    const prefs = loadStudentPreferences(studentId);
+    setIsLooping(prefs.isLooping);
+    setPlaybackRate(prefs.playbackRate);
+    setInternalPitchShift(prefs.pitchShift);
+    if (audioRef.current) {
+      audioRef.current.loop = prefs.isLooping;
+      audioRef.current.playbackRate = prefs.playbackRate;
+    }
+  }, [studentId]);
+
+  // Lazily connect the <audio> element to the PSOLA voice pitch worklet when pitchShift !== 0
+  const ensurePitchGraph = useCallback(async (targetPitch: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // If pitch is 0 and we haven't attached Web Audio yet, keep native direct playback
+    if (targetPitch === 0 && !pitchGraphRef.current) {
+      return;
+    }
+
+    try {
+      if (pitchGraphRef.current && attachedAudioElRef.current === audio) {
+        if (pitchGraphRef.current.context.state === 'suspended') {
+          await pitchGraphRef.current.context.resume();
+        }
+        pitchGraphRef.current.setPitchSemitones(targetPitch);
+        return;
+      }
+
+      if (!graphInitPromiseRef.current) {
+        graphInitPromiseRef.current = createVoicePitchGraph(audio, targetPitch)
+          .then((graph) => {
+            pitchGraphRef.current = graph;
+            attachedAudioElRef.current = audio;
+            return graph;
+          })
+          .finally(() => {
+            graphInitPromiseRef.current = null;
+          });
+      }
+
+      const graph = await graphInitPromiseRef.current;
+      if (graph) {
+        graph.setPitchSemitones(targetPitch);
+      }
+    } catch (err) {
+      console.warn('Voice pitch graph initialization warning:', err);
+    }
+  }, []);
+
+  // Sync changes to pitchShift into the PSOLA voice pitch worklet
+  useEffect(() => {
+    if (pitchShift !== 0 || pitchGraphRef.current) {
+      ensurePitchGraph(pitchShift);
+    }
+  }, [pitchShift, ensurePitchGraph]);
+
+  // Cleanup graph on unmount
+  useEffect(() => {
+    return () => {
+      if (pitchGraphRef.current) {
+        pitchGraphRef.current.dispose();
+        pitchGraphRef.current = null;
+      }
+    };
+  }, []);
+
+  const updatePitchShift = (nextPitch: number) => {
+    const clamped = Math.max(-6, Math.min(6, Math.round(nextPitch * 2) / 2));
+    setInternalPitchShift(clamped);
+    saveStudentPreferences(studentId, { pitchShift: clamped });
+    if (onPitchShiftChange) {
+      onPitchShiftChange(clamped);
+    }
+  };
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -30,23 +151,27 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
     const streamUrl = getMediaStreamUrl(recording);
     audio.src = streamUrl;
     audio.playbackRate = playbackRate;
+    audio.preservesPitch = true;
     audio.loop = isLooping;
     audio.load();
 
-    audio
-      .play()
-      .then(() => {
-        setIsPlaying(true);
-        setIsLoading(false);
-      })
-      .catch(() => {
-        // Autoplay may be blocked on initial load until user taps play
-        setIsPlaying(false);
-        setIsLoading(false);
-      });
+    const startPlayback = async () => {
+      if (pitchShift !== 0 || pitchGraphRef.current) {
+        await ensurePitchGraph(pitchShift);
+      }
+      await audio.play();
+      setIsPlaying(true);
+      setIsLoading(false);
+    };
+
+    startPlayback().catch(() => {
+      // Autoplay may be blocked on initial load until user taps play
+      setIsPlaying(false);
+      setIsLoading(false);
+    });
   }, [recording?.id, recording?.customAudioDataUrl]);
 
-  const togglePlay = () => {
+  const togglePlay = async () => {
     const audio = audioRef.current;
     if (!audio || !recording) return;
     if (isPlaying) {
@@ -54,6 +179,9 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
       setIsPlaying(false);
     } else {
       setErrorMsg(null);
+      if (pitchShift !== 0 || pitchGraphRef.current) {
+        await ensurePitchGraph(pitchShift);
+      }
       audio
         .play()
         .then(() => setIsPlaying(true))
@@ -83,6 +211,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
   const toggleLoop = () => {
     const next = !isLooping;
     setIsLooping(next);
+    saveStudentPreferences(studentId, { isLooping: next });
     if (audioRef.current) {
       audioRef.current.loop = next;
     }
@@ -93,8 +222,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
     const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
     const nextSpeed = speeds[nextIdx];
     setPlaybackRate(nextSpeed);
+    saveStudentPreferences(studentId, { playbackRate: nextSpeed });
     if (audioRef.current) {
       audioRef.current.playbackRate = nextSpeed;
+      audioRef.current.preservesPitch = true;
     }
   };
 
@@ -113,6 +244,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
     <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] px-4 py-3">
       <audio
         ref={audioRef}
+        crossOrigin="anonymous"
         preload="metadata"
         onLoadedMetadata={(e) => {
           setDuration(e.currentTarget.duration || 0);
@@ -177,6 +309,75 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
           </div>
         )}
 
+        {/* Expandable Pitch Shift Drawer */}
+        {showPitchPanel && (
+          <div className="bg-slate-50 border border-slate-200/90 rounded-2xl px-3.5 py-2.5 flex flex-col gap-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5 font-bold text-slate-800">
+                <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                <span>גובה צליל (Pitch):</span>
+                <span
+                  className={`px-2 py-0.5 rounded-md font-extrabold ${
+                    pitchShift === 0
+                      ? 'bg-slate-200/80 text-slate-700'
+                      : 'bg-indigo-100 text-indigo-800'
+                  }`}
+                >
+                  {formatPitchLabel(pitchShift)}
+                </span>
+              </div>
+
+              {pitchShift !== 0 && (
+                <button
+                  type="button"
+                  onClick={() => updatePitchShift(0)}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline"
+                >
+                  איפוס לרגיל (0)
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2" dir="ltr">
+              <button
+                type="button"
+                onClick={() => updatePitchShift(pitchShift - 0.5)}
+                disabled={pitchShift <= -6}
+                className="w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-bold shadow-2xs active:scale-95 transition"
+                title="הנמך"
+              >
+                <Minus className="w-4 h-4" />
+              </button>
+
+              <input
+                type="range"
+                min={-6}
+                max={6}
+                step={0.5}
+                value={pitchShift}
+                onChange={(e) => updatePitchShift(parseFloat(e.target.value))}
+                className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+              />
+
+              <button
+                type="button"
+                onClick={() => updatePitchShift(pitchShift + 0.5)}
+                disabled={pitchShift >= 6}
+                className="w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 disabled:opacity-40 flex items-center justify-center font-bold shadow-2xs active:scale-95 transition"
+                title="הגבה"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] text-slate-400 px-1" dir="ltr">
+              <span>-6 (נמוך)</span>
+              <span>0 (מקורי)</span>
+              <span>+6 (גבוה)</span>
+            </div>
+          </div>
+        )}
+
         {/* Scrubber Bar */}
         <div className="flex items-center gap-2.5" dir="ltr">
           <span className="text-[11px] font-mono text-slate-500 w-9 text-right">
@@ -198,15 +399,39 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({ recording, paras
 
         {/* Transport Controls Row */}
         <div className="flex items-center justify-between px-1 pt-0.5">
-          {/* Speed toggle */}
-          <button
-            type="button"
-            onClick={cycleSpeed}
-            className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-95 transition"
-            title="מהירות השמעה"
-          >
-            {playbackRate}x
-          </button>
+          {/* Left group: Speed & Pitch buttons */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={cycleSpeed}
+              className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 active:scale-95 transition"
+              title="מהירות השמעה"
+            >
+              {playbackRate}x
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowPitchPanel((prev) => !prev)}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1 active:scale-95 transition ${
+                pitchShift !== 0
+                  ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                  : showPitchPanel
+                  ? 'bg-slate-200 text-slate-800'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+              title="שינוי גובה צליל (Pitch)"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span dir="ltr">
+                {pitchShift === 0
+                  ? 'סולם'
+                  : pitchShift > 0
+                  ? `+${pitchShift}`
+                  : `${pitchShift}`}
+              </span>
+            </button>
+          </div>
 
           {/* Main transport */}
           <div className="flex items-center gap-4">
