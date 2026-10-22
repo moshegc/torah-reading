@@ -665,7 +665,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
 
               return (
                 <React.Fragment key={vKey}>
-                  {isNewChapter && (
+                  {displayMode !== 'no_nikud' && isNewChapter && (
                     <div className="my-3 text-center font-sans">
                       <span className="inline-block px-3 py-0.5 rounded-full bg-indigo-100 text-indigo-900 text-xs font-extrabold">
                         פרק {v.heChapter}
@@ -691,7 +691,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
                         : undefined
                     }
                   >
-                    {textToShow !== v.withoutNikud && (<span className={`font-sans font-bold text-indigo-600/85 mx-1 select-none ${sizeConfig.badge}`}>({v.heVerse})</span>)}
+                    {displayMode !== 'no_nikud' && (<span className={`font-sans font-bold text-indigo-600/85 mx-1 select-none ${sizeConfig.badge}`}>({v.heVerse})</span>)}
                     <span>{textToShow}</span>{' '}
                   </span>
                   {textToShow !== v.withoutNikud && v.parashaBreak === 'פ' && <span className="block h-3" />}
@@ -722,7 +722,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
 
               return (
                 <React.Fragment key={vKey}>
-                  {isNewChapter && (
+                  {displayMode !== 'no_nikud' && isNewChapter && (
                     <div className="pt-2 text-center font-sans">
                       <span className="inline-block px-3 py-0.5 rounded-full bg-indigo-100 text-indigo-900 text-xs font-extrabold">
                         פרק {v.heChapter}
@@ -743,7 +743,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
                         : ''
                     }`}
                   >
-                    {textToShow !== v.withoutNikud && (<span className={`font-sans font-extrabold text-indigo-600 shrink-0 select-none ${sizeConfig.badge}`}>{v.heVerse}</span>)}
+                    {displayMode !== 'no_nikud' && (<span className={`font-sans font-extrabold text-indigo-600 shrink-0 select-none ${sizeConfig.badge}`}>{v.heVerse}</span>)}
                     <div className={`font-torah text-slate-900 ${sizeConfig.single}`}>
                       {textToShow}
                     </div>
