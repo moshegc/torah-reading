@@ -12,7 +12,6 @@ function renderView(syncStatus: 'saved' | 'saving' | 'error' = 'saved', pendingD
       teacherId="test"
       teacherToken="test-token"
       students={students}
-      haftarotMap={{ 'בראשית': 31 }}
       onChangeLibrary={async () => true}
       pendingDeletionCount={pendingDeletionCount}
       onSetDefaultHaftarahTradition={vi.fn()}
@@ -21,7 +20,6 @@ function renderView(syncStatus: 'saved' | 'saving' | 'error' = 'saved', pendingD
       lastSyncedAt={null}
       onForceSync={async () => true}
       onLogout={vi.fn()}
-      onSetHaftarahLength={vi.fn()}
       onUpdateStudent={vi.fn()}
       onAddStudent={vi.fn()}
       onPreviewStudent={vi.fn()}

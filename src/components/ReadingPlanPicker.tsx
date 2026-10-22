@@ -1,4 +1,5 @@
 import React from 'react';
+import { getVerseReadingById } from '../utils/verseCounts';
 import {
   ALIYOT_KEYS,
   EMPTY_READING_PLAN,
@@ -31,6 +32,7 @@ export interface ReadingPlanChange {
 
 interface ReadingPlanPickerProps {
   parasha: string;
+  haftarahName?: string;
   plan?: ReadingPlan;
   tradition?: HaftarahTradition;
   defaultTradition: HaftarahTradition;
@@ -48,6 +50,7 @@ const TRADITION_LABEL: Record<HaftarahTradition, string> = {
  */
 export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
   parasha,
+  haftarahName,
   plan = EMPTY_READING_PLAN,
   tradition,
   defaultTradition,
@@ -56,10 +59,13 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
   const effectiveTradition = tradition ?? defaultTradition;
 
   const emit = (nextPlan: ReadingPlan, nextTradition: HaftarahTradition | undefined) => {
+    const nextHaftarah = (nextPlan.specialId ?? null) !== (plan.specialId ?? null)
+      ? (nextPlan.specialId ? getVerseReadingById(nextPlan.specialId)?.heName : parasha)
+      : haftarahName;
     onChange({
       plan: nextPlan,
       tradition: nextTradition,
-      verses: computePlanVerses(parasha, nextPlan, nextTradition ?? defaultTradition),
+      verses: computePlanVerses(parasha, nextPlan, nextTradition ?? defaultTradition, nextHaftarah),
     });
   };
 
@@ -69,7 +75,7 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
     emit({ ...plan, aliyot: ALIYOT_KEYS.filter((k) => aliyot.includes(k)) }, tradition);
   };
 
-  const verses = computePlanVerses(parasha, plan, effectiveTradition);
+  const verses = computePlanVerses(parasha, plan, effectiveTradition, haftarahName);
 
   const checkbox = (label: string, checked: boolean, onToggle: () => void) => (
     <label

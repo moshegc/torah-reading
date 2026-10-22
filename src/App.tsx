@@ -9,6 +9,7 @@ import {
   Cloud,
 } from 'lucide-react';
 import { HAFTAROT_VERSE_COUNTS as INITIAL_HAFTAROT } from './data/torahReference';
+import { findHaftarahReading, getHaftarahVerses } from './data/haftarahOptions';
 import type { StudentProfile, RecordingItem, LibraryChange } from './types';
 import { decodeStudentShareToken } from './utils/trackerCalculations';
 import {
@@ -272,26 +273,22 @@ function AppContent() {
     syncToR2(nextStudents, haftarotRef.current);
   };
 
-  const handleSetHaftarahLength = (name: string, verses: number) => {
-    const clean = name.trim();
-    if (!clean) return;
-    const nextHaftarot = {
-      ...haftarotRef.current,
-      [clean]: verses,
-    };
-    const nextStudents = studentsRef.current.map((s) =>
-      s.haftarah.trim() === clean ? { ...s, haftarahVerses: verses } : s
-    );
-    setHaftarotMap(nextHaftarot);
-    setStudents(nextStudents);
-    syncToR2(nextStudents, nextHaftarot);
-  };
-
   const handleSetDefaultHaftarahTradition = (tradition: HaftarahTradition) => {
     const next: TeacherSettings = { ...settingsRef.current, defaultHaftarahTradition: tradition };
     settingsRef.current = next;
     setTeacherSettings(next);
-    syncToR2(studentsRef.current, haftarotRef.current);
+    const nextStudents = studentsRef.current.map((student) =>
+      !student.haftarahTradition && findHaftarahReading(student.haftarah)
+        ? {
+            ...student,
+            haftarahVerses: student.readingPlan && !student.readingPlan.haftarah
+              ? 0
+              : getHaftarahVerses(student.haftarah, tradition),
+          }
+        : student
+    );
+    setStudents(nextStudents);
+    syncToR2(nextStudents, haftarotRef.current);
   };
 
   const handleChangeLibrary = async (change: LibraryChange): Promise<boolean> => {
@@ -508,7 +505,6 @@ function AppContent() {
         teacherDisplayName={teacherSession.teacher.displayName}
         teacherToken={teacherSession.token}
         students={students}
-        haftarotMap={haftarotMap}
         parashaLibrary={parashaLibrary}
         onChangeLibrary={handleChangeLibrary}
         pendingDeletionCount={pendingMediaDeletes.length}
@@ -519,7 +515,6 @@ function AppContent() {
         lastSyncedAt={lastSyncedAt}
         onForceSync={() => syncToR2(students, haftarotMap)}
         onLogout={handleLogout}
-        onSetHaftarahLength={handleSetHaftarahLength}
         onUpdateStudent={handleUpdateStudent}
         onAddStudent={handleAddStudent}
         onPreviewStudent={(st) => setPreviewStudent(st)}

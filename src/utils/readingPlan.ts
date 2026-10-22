@@ -1,4 +1,5 @@
 import { getParashaVerseReading } from '../data/parashaOptions';
+import { getHaftarahVerses } from '../data/haftarahOptions';
 import {
   HaftarahTradition,
   countSelectedVerses,
@@ -73,15 +74,23 @@ export interface PlanVerses {
 export function computePlanVerses(
   parashaName: string,
   plan: ReadingPlan | null | undefined,
-  tradition: HaftarahTradition
+  tradition: HaftarahTradition,
+  haftarahName?: string
 ): PlanVerses {
   const reading = getParashaVerseReading(parashaName);
-  if (!reading || !plan) return { torah: 0, haftarah: 0 };
+  if (!plan) return { torah: 0, haftarah: 0 };
   const special = plan.specialId ? getVerseReadingById(plan.specialId) : null;
-  const res = countSelectedVerses(
-    reading,
-    { weekday: plan.weekday, aliyot: plan.aliyot, maftir: plan.maftir, haftarah: plan.haftarah },
-    { tradition, special }
-  );
-  return { torah: res.torah, haftarah: res.haftarah };
+  const res = reading
+    ? countSelectedVerses(
+        reading,
+        { weekday: plan.weekday, aliyot: plan.aliyot, maftir: plan.maftir, haftarah: plan.haftarah },
+        { tradition, special }
+      )
+    : { torah: 0, haftarah: 0 };
+  return {
+    torah: res.torah,
+    haftarah: haftarahName !== undefined
+      ? plan.haftarah ? getHaftarahVerses(haftarahName, tradition) : 0
+      : res.haftarah,
+  };
 }

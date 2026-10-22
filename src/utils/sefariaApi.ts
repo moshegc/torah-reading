@@ -1,6 +1,8 @@
 import { PARASHA_SEFARIA_REFS, ParashaSefariaRefs } from '../data/sefariaParashaRefs';
 import type { RecordingItem } from '../types';
 import { getJointParashaSefariaRefs } from './jointParashaRefs';
+import { HAFTARAH_OPTIONS } from '../data/haftarahOptions';
+import { getHaftarahSegments } from './verseCounts';
 
 export type TextDisplayMode = 'full' | 'no_nikud' | 'tikkun' | 'nikud_only';
 export type TextFontSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -214,6 +216,13 @@ export function resolveHaftarahRefs(
   recording?: RecordingItem | null,
   tradition: 'ashkenazi' | 'sephardi' = 'ashkenazi'
 ): { label: string; refs: string[] } | null {
+  const selected = HAFTARAH_OPTIONS.find((option) => option.name === haftarahName?.trim());
+  if (selected) {
+    return {
+      label: `הפטרת ${selected.name}`,
+      refs: getHaftarahSegments(selected.reading, tradition).map((segment) => segment.ref),
+    };
+  }
   const recText = recording ? `${recording.aliyah} ${recording.title}` : '';
 
   // 1. Check if recording or haftarahName matches a special Haftarah
