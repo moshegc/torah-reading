@@ -152,7 +152,10 @@ function buildParasha(names) {
   const meta = L.lookupParsha(names.length === 1 ? names[0] : names);
   const book = BOOK_BY_NUM[meta.book];
   const { aliyot, maftir } = buildRawAliyot(meta.fullkriyah, book);
-  const weekday = meta.weekday ? Object.values(buildRawAliyot(meta.weekday, book).aliyot) : [];
+  // hebcal has no weekday reading for joint parashot; Monday/Thursday read the opening of the first
+  // parasha of the pair, which is also where the joint reading begins.
+  const weekdayMeta = meta.weekday ?? (names.length > 1 ? L.lookupParsha(names[0]).weekday : undefined);
+  const weekday = weekdayMeta ? Object.values(buildRawAliyot(weekdayMeta, book).aliyot) : [];
   const haftarah = haftarahSegments(meta.haft);
   const haftarahSephardi = meta.seph ? haftarahSegments(meta.seph) : haftarah;
   const nums = asArray(meta.num);

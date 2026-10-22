@@ -1856,7 +1856,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Exodus 40:1-40:38", book: "Exodus", start: 1173, end: 1210, count: 38 },
     },
     maftir: { ref: "Exodus 40:34-40:38", book: "Exodus", start: 1206, end: 1210, count: 5 },
-    weekday: [],
+    weekday: [
+      { ref: "Exodus 35:1-35:3", book: "Exodus", start: 997, end: 999, count: 3 },
+      { ref: "Exodus 35:4-35:10", book: "Exodus", start: 1000, end: 1006, count: 7 },
+      { ref: "Exodus 35:11-35:20", book: "Exodus", start: 1007, end: 1016, count: 10 },
+    ],
     haftarah: [
       { ref: "I Kings 7:51-8:21", book: "I Kings", start: 268, end: 289, count: 22 },
     ],
@@ -1885,7 +1889,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Leviticus 15:16-15:33", book: "Leviticus", start: 439, end: 456, count: 18 },
     },
     maftir: { ref: "Leviticus 15:31-15:33", book: "Leviticus", start: 454, end: 456, count: 3 },
-    weekday: [],
+    weekday: [
+      { ref: "Leviticus 12:1-12:4", book: "Leviticus", start: 300, end: 303, count: 4 },
+      { ref: "Leviticus 12:5-12:8", book: "Leviticus", start: 304, end: 307, count: 4 },
+      { ref: "Leviticus 13:1-13:5", book: "Leviticus", start: 308, end: 312, count: 5 },
+    ],
     haftarah: [
       { ref: "II Kings 7:3-7:20", book: "II Kings", start: 177, end: 194, count: 18 },
     ],
@@ -1914,7 +1922,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Leviticus 20:8-20:27", book: "Leviticus", start: 581, end: 600, count: 20 },
     },
     maftir: { ref: "Leviticus 20:25-20:27", book: "Leviticus", start: 598, end: 600, count: 3 },
-    weekday: [],
+    weekday: [
+      { ref: "Leviticus 16:1-16:6", book: "Leviticus", start: 457, end: 462, count: 6 },
+      { ref: "Leviticus 16:7-16:11", book: "Leviticus", start: 463, end: 467, count: 5 },
+      { ref: "Leviticus 16:12-16:17", book: "Leviticus", start: 468, end: 473, count: 6 },
+    ],
     haftarah: [
       { ref: "Amos 9:7-9:15", book: "Amos", start: 138, end: 146, count: 9 },
     ],
@@ -1943,7 +1955,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Leviticus 27:16-27:34", book: "Leviticus", start: 841, end: 859, count: 19 },
     },
     maftir: { ref: "Leviticus 27:32-27:34", book: "Leviticus", start: 857, end: 859, count: 3 },
-    weekday: [],
+    weekday: [
+      { ref: "Leviticus 25:1-25:3", book: "Leviticus", start: 725, end: 727, count: 3 },
+      { ref: "Leviticus 25:4-25:7", book: "Leviticus", start: 728, end: 731, count: 4 },
+      { ref: "Leviticus 25:8-25:13", book: "Leviticus", start: 732, end: 737, count: 6 },
+    ],
     haftarah: [
       { ref: "Jeremiah 16:19-17:14", book: "Jeremiah", start: 409, end: 425, count: 17 },
     ],
@@ -1972,7 +1988,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Numbers 23:27-25:9", book: "Numbers", start: 839, end: 876, count: 38 },
     },
     maftir: { ref: "Numbers 25:7-25:9", book: "Numbers", start: 874, end: 876, count: 3 },
-    weekday: [],
+    weekday: [
+      { ref: "Numbers 19:1-19:6", book: "Numbers", start: 686, end: 691, count: 6 },
+      { ref: "Numbers 19:7-19:9", book: "Numbers", start: 692, end: 694, count: 3 },
+      { ref: "Numbers 19:10-19:17", book: "Numbers", start: 695, end: 702, count: 8 },
+    ],
     haftarah: [
       { ref: "Micah 5:6-6:8", book: "Micah", start: 61, end: 77, count: 17 },
     ],
@@ -2001,7 +2021,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Numbers 35:9-36:13", book: "Numbers", start: 1251, end: 1289, count: 39 },
     },
     maftir: { ref: "Numbers 36:11-36:13", book: "Numbers", start: 1287, end: 1289, count: 3 },
-    weekday: [],
+    weekday: [
+      { ref: "Numbers 30:2-30:9", book: "Numbers", start: 1046, end: 1053, count: 8 },
+      { ref: "Numbers 30:10-30:13", book: "Numbers", start: 1054, end: 1057, count: 4 },
+      { ref: "Numbers 30:14-30:17", book: "Numbers", start: 1058, end: 1061, count: 4 },
+    ],
     haftarah: [
       { ref: "Jeremiah 2:4-2:28", book: "Jeremiah", start: 23, end: 47, count: 25 },
       { ref: "Jeremiah 3:4-3:4", book: "Jeremiah", start: 60, end: 60, count: 1 },
@@ -2032,7 +2056,11 @@ export const VERSE_READINGS: VerseReadingData[] = [
       "7": { ref: "Deuteronomy 31:20-31:30", book: "Deuteronomy", start: 853, end: 863, count: 11 },
     },
     maftir: { ref: "Deuteronomy 31:28-31:30", book: "Deuteronomy", start: 861, end: 863, count: 3 },
-    weekday: [],
+    weekday: [
+      { ref: "Deuteronomy 29:9-29:11", book: "Deuteronomy", start: 794, end: 796, count: 3 },
+      { ref: "Deuteronomy 29:12-29:14", book: "Deuteronomy", start: 797, end: 799, count: 3 },
+      { ref: "Deuteronomy 29:15-29:28", book: "Deuteronomy", start: 800, end: 813, count: 14 },
+    ],
     haftarah: [
       { ref: "Isaiah 61:10-63:9", book: "Isaiah", start: 1199, end: 1221, count: 23 },
     ],

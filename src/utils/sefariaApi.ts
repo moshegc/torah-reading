@@ -1,5 +1,6 @@
 import { PARASHA_SEFARIA_REFS, ParashaSefariaRefs } from '../data/sefariaParashaRefs';
 import { RecordingItem } from '../data/driveCatalog';
+import { getJointParashaSefariaRefs } from './jointParashaRefs';
 
 export type TextDisplayMode = 'full' | 'no_nikud' | 'tikkun' | 'nikud_only';
 export type TextFontSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -117,6 +118,10 @@ export function findParashaRefs(parashaName?: string): ParashaSefariaRefs | null
   if (!norm) return null;
   const exact = PARASHA_SEFARIA_REFS.find((p) => p.heName === norm);
   if (exact) return exact;
+  // Joint parashot (e.g. "ויקהל-פקודי") must be resolved before the substring fallback below,
+  // which would otherwise match only the first of the two parashot.
+  const joint = getJointParashaSefariaRefs(norm);
+  if (joint) return joint;
   // Substring fallback (e.g., if raw string contains the parasha name)
   return (
     PARASHA_SEFARIA_REFS.find((p) => norm.includes(p.heName) || p.heName.includes(norm)) ||
