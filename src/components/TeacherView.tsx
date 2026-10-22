@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Users,
   UserPlus,
@@ -147,6 +147,26 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     [haftarahNames]
   );
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'gantt'>('cards');
+  const ganttScrollRef = useRef<HTMLDivElement>(null);
+  const ganttStudentHeaderRef = useRef<HTMLTableCellElement>(null);
+  const ganttCurrentWeekRef = useRef<HTMLTableCellElement>(null);
+
+  useEffect(() => {
+    const container = ganttScrollRef.current;
+    const studentHeader = ganttStudentHeaderRef.current;
+    const currentWeek = ganttCurrentWeekRef.current;
+    if (viewMode !== 'gantt' || !container || !studentHeader || !currentWeek) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const studentHeaderRect = studentHeader.getBoundingClientRect();
+    const currentWeekRect = currentWeek.getBoundingClientRect();
+    const visibleCenter = (containerRect.left + studentHeaderRect.left) / 2;
+    container.scrollBy({
+      left: currentWeekRect.left + currentWeekRect.width / 2 - visibleCenter,
+      behavior: 'auto',
+    });
+  }, [viewMode]);
+
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [managingStudentId, setManagingStudentId] = useState<string | null>(null);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
@@ -1303,11 +1323,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div ref={ganttScrollRef} className="overflow-x-auto">
               <table className="w-full text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-900 text-white">
-                    <th className="sticky right-0 z-20 bg-slate-900 p-3 text-right min-w-[210px] border-l border-slate-700">
+                    <th ref={ganttStudentHeaderRef} className="sticky right-0 z-20 bg-slate-900 p-3 text-right min-w-[210px] border-l border-slate-700">
                       תלמיד / פרשה / תאריכים
                     </th>
                     {ganttData.weeks.map((wk) => {
@@ -1317,6 +1337,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       return (
                         <th
                           key={wk.toISOString()}
+                          ref={isCurrentWeek ? ganttCurrentWeekRef : undefined}
                           className={`p-1.5 text-center font-mono text-[10px] min-w-[42px] border-l border-slate-800 ${
                             isCurrentWeek
                               ? 'bg-amber-500 text-slate-950 font-extrabold'
