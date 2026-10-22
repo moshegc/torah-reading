@@ -27,4 +27,28 @@ describe('student file labels', () => {
     expect(html).not.toContain('private-document.pdf');
     expect(html).not.toContain('Hidden portion');
   });
+
+  it('sorts Torah portions and excludes unassigned folders and other sections', () => {
+    vi.stubGlobal('window', { location: { href: 'https://example.com/?student=student' } });
+    const item = (id: string, aliyah: string): StudentProfile['portions'][number] => ({
+      id, aliyah, title: `${id}.mp3`, ext: 'mp3', category: 'shabbat', viewUrl: '/audio',
+    });
+    const student: StudentProfile = {
+      id: 'student', name: 'Student', parasha: 'בראשית', haftarah: '',
+      barMitzvahDate: '2027-01-01', parashaVerses: 146, skippedVerses: 0,
+      learnedParashaVerses: 0, haftarahVerses: 0, learnedHaftarahVerses: 0,
+      portions: [
+        item('third', 'עליית שלישי'), item('second', 'עליית שני'), item('first', 'עליית ראשון'),
+        { ...item('general', 'Assigned general'), section: 'general' },
+        { ...item('haftarah', 'Assigned Haftarah'), section: 'haftarah' },
+        { ...item('document', 'Haftarah document'), ext: 'pdf', category: 'doc', section: 'haftarah' },
+      ],
+    };
+    const html = renderToStaticMarkup(<StudentView student={student} parashaLibrary={{ 'כללי': [item('unassigned', 'Unassigned material')] }} />);
+    expect(html.indexOf('עליית ראשון')).toBeLessThan(html.indexOf('עליית שני'));
+    expect(html.indexOf('עליית שני')).toBeLessThan(html.indexOf('עליית שלישי'));
+    for (const label of ['Unassigned material', 'Assigned general', 'Assigned Haftarah', 'Haftarah document']) {
+      expect(html).not.toContain(label);
+    }
+  });
 });

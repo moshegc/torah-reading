@@ -13,6 +13,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import type { RecordingItem } from '../types';
+import { getRecordingSection, isDocument } from '../utils/recordings';
 import { getMediaStreamUrl } from '../utils/trackerCalculations';
 import {
   loadStudentPreferences,
@@ -82,6 +83,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const hasSefariaText =
     !hideText &&
     recording &&
+    getRecordingSection(recording) !== 'general' && !isDocument(recording) &&
     (recording.category === 'shabbat' ||
       recording.category === 'chol' ||
       recording.category === 'haftarah');

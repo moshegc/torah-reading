@@ -40,13 +40,103 @@ beforeEach(() => {
 });
 
 describe('teacher-owned study materials', () => {
-  it('includes only the general library and requested student in a student response', async () => {
+  it.each([
+    ['torah', 'shabbat', 'mp3'],
+    ['haftarah', 'haftarah', 'mp3'],
+    ['general', 'blessings', 'mp3'],
+    ['torah', 'doc', 'pdf'],
+    ['haftarah', 'doc', 'pdf'],
+    ['general', 'doc', 'pdf'],
+  ])('returns an assigned %s file (%s, %s) with its designation and media metadata', async (section, category, ext) => {
+    const assignedFile = {
+      id: `assigned-${section}-${ext}`,
+      title: `original.${ext}`,
+      aliyah: 'Assigned display name',
+      section,
+      category,
+      ext,
+      visible: true,
+      r2Key: `media/teacher/library/assigned-${section}.${ext}`,
+      r2Url: `/api/r2-media?key=assigned-${section}.${ext}`,
+      viewUrl: `/assigned-${section}.${ext}`,
+    };
+    const assignedStudent = { ...student, portions: [assignedFile] };
+    r2GetJson.mockResolvedValue({
+      students: [assignedStudent, { id: 'other-student', portions: [] }],
+      parashaLibrary: { ...library, 'Custom folder': [assignedFile] },
+    });
+
+    const res = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.ok).toBe(true);
+    expect(payload.student).toEqual(assignedStudent);
+    expect(payload.student.portions).toEqual([assignedFile]);
+    expect(payload.parashaLibrary).toEqual({});
+    expect(payload).not.toHaveProperty('data');
+  });
+
+  it('returns all of the requested student assignments but no other students or unassigned materials', async () => {
+    const portions = [
+      { ...library['בראשית'][0], section: 'torah', aliyah: 'First portion', ext: 'mp3', visible: true },
+      { id: 'assigned-haftarah', category: 'haftarah', section: 'haftarah', aliyah: 'Haftarah', ext: 'mp3', visible: true },
+      { ...library['כללי'][0], category: 'blessings', section: 'general', aliyah: 'General practice', ext: 'mp3', visible: true },
+      { ...library['תמונות'][0], section: 'general', aliyah: 'Practice guide', ext: 'pdf', visible: true },
+    ];
+    const assignedStudent = { ...student, portions };
+    const otherStudent = {
+      id: 'other-student',
+      portions: [{ id: 'other-student-only', category: 'haftarah', section: 'haftarah' }],
+    };
+    const unassignedFile = { id: 'unassigned-general', category: 'blessings', section: 'general' };
+    r2GetJson.mockResolvedValue({
+      students: [otherStudent, assignedStudent],
+      parashaLibrary: { ...library, 'כללי': [...library['כללי'], unassignedFile] },
+    });
+
+    const res = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.ok).toBe(true);
+    expect(payload.student).toEqual(assignedStudent);
+    expect(payload.student.portions).toEqual(portions);
+    expect(payload.parashaLibrary).toEqual({});
+    expect(payload).not.toHaveProperty('data');
+    expect(payload).not.toHaveProperty('students');
+    expect(JSON.stringify(payload)).not.toContain(otherStudent.id);
+    expect(JSON.stringify(payload)).not.toContain(otherStudent.portions[0].id);
+    expect(JSON.stringify(payload)).not.toContain(unassignedFile.id);
+  });
+
+  it('returns directly assigned files even when the teacher has no library folders', async () => {
+    const assignedFile = {
+      id: 'student-upload', title: 'upload.mp3', aliyah: 'Student practice',
+      category: 'blessings', section: 'general', ext: 'mp3', visible: true,
+      r2Key: 'media/teacher/student/upload.mp3', viewUrl: '/student-upload.mp3',
+    };
+    const assignedStudent = { ...student, portions: [assignedFile] };
+    r2GetJson.mockResolvedValue({ students: [assignedStudent] });
+
+    const res = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true, student: assignedStudent, parashaLibrary: {},
+    }));
+  });
+
+  it('returns only the requested student and no unassigned library folders', async () => {
     const res = response();
     await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
     expect(r2GetJson).toHaveBeenCalledWith('teachers/teacher/data.json');
     const payload = res.json.mock.calls[0][0];
     expect(payload.student).toEqual(student);
-    expect(payload.parashaLibrary).toEqual({ 'כללי': library['כללי'], 'תמונות': library['תמונות'] });
+    expect(payload.parashaLibrary).toEqual({});
     expect(payload).not.toHaveProperty('data');
     expect(payload.parashaLibrary).not.toHaveProperty('בראשית');
   });
@@ -59,12 +149,12 @@ describe('teacher-owned study materials', () => {
     }));
   });
 
-  it('returns empty general folders rather than personal defaults for an unconfigured library', async () => {
+  it('returns no library folders for an unconfigured library', async () => {
     r2GetJson.mockResolvedValue({ students: [student] });
     const res = response();
     await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      parashaLibrary: { 'כללי': [], 'תמונות': [] },
+      parashaLibrary: {},
     }));
   });
 

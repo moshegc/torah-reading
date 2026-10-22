@@ -52,10 +52,7 @@ export default async function handler(req, res) {
           initialized: true,
           teacherId,
           student: foundStudent,
-          parashaLibrary: foundStudent ? {
-            'כללי': data.parashaLibrary?.['כללי'] || [],
-            'תמונות': data.parashaLibrary?.['תמונות'] || [],
-          } : {},
+          parashaLibrary: {},
           updatedAt: data.updatedAt || null,
           r2Configured: isR2Configured(),
         });

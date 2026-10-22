@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CloudUpload, FileText, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
-import type { LibraryChange, RecordingItem } from '../types';
+import type { LibraryChange, RecordingItem, RecordingSection } from '../types';
 import { PARASHA_OPTIONS } from '../data/parashaOptions';
 import { uploadLocalFileToR2 } from '../utils/cloudSync';
 import { classifyFileTitle, getMediaStreamUrl } from '../utils/trackerCalculations';
+import { getRecordingSection, withRecordingSection } from '../utils/recordings';
+import { RecordingSectionSelect } from './RecordingSectionSelect';
 
 interface TeacherLibraryManagerProps {
   teacherId: string;
@@ -61,6 +63,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   const [newFolder, setNewFolder] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
+  const [section, setSection] = useState<RecordingSection>('torah');
   const [replacementId, setReplacementId] = useState<string | null>(null);
   const [movingId, setMovingId] = useState<string | null>(null);
   const [destination, setDestination] = useState('');
@@ -215,15 +218,12 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
         };
         setUploadedItem(item);
       }
-      const isDocument = !MIME_BY_EXT[ext].startsWith('audio/');
-      const savedItem: RecordingItem = {
+      const savedItem = withRecordingSection({
         ...item,
         title: title.trim(),
         aliyah: title.trim(),
-        category: isDocument ? 'doc'
-          : target && target.category !== 'doc' ? target.category
-          : folder === 'כללי' ? 'blessings' : classifyFileTitle(title).category,
-      };
+        category: target?.category ?? classifyFileTitle(title).category,
+      }, section);
       const change: LibraryChange = target
         ? { action: 'replace-item', folder, itemId: target.id, item: savedItem }
         : { action: 'add-item', folder, item: savedItem };
@@ -242,7 +242,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
         </div>
         <div className="p-5 space-y-4 overflow-y-auto">
           <p className="text-sm text-slate-600">
-            נהל תיקיות, הקלטות, מסמכים ותמונות במאגר שלך. חומרי כללי ותמונות זמינים לתלמידים; חומרי פרשה ניתנים לשיוך בניהול ההקלטות.
+            נהל תיקיות, הקלטות, מסמכים ותמונות במאגר שלך. רק חומרים ששויכו לתלמיד בניהול ההקלטות יוצגו לו, לפי הסוג שנבחר.
           </p>
           {pendingDeletionCount > 0 && (
             <div role="alert" className="p-3 rounded-xl bg-amber-50 text-amber-900 text-sm space-y-2">
@@ -296,7 +296,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                   <div className="flex gap-2 shrink-0">
                     <button type="button" disabled={disabled} onClick={() => { setRenameTarget(item); setRenameName(item.aliyah); }} className="text-indigo-700 p-1 text-xs font-bold">שנה שם</button>
                     <button type="button" disabled={disabled || folderOptions.length < 2} onClick={() => { setMovingId(item.id); setDestination(folderOptions.find((name) => name !== folder) ?? ''); }} className="text-indigo-700 p-1 text-xs font-bold">העבר</button>
-                    <button type="button" aria-label={`החלף ${item.aliyah}`} disabled={disabled} onClick={() => { resetUpload(); setReplacementId(item.id); setTitle(item.aliyah); setNotice(null); fileInput.current?.focus(); }} className="text-indigo-700 p-1 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /><span>החלף</span></button>
+                    <button type="button" aria-label={`החלף ${item.aliyah}`} disabled={disabled} onClick={() => { resetUpload(); setReplacementId(item.id); setTitle(item.aliyah); setSection(getRecordingSection(item)); setNotice(null); fileInput.current?.focus(); }} className="text-indigo-700 p-1 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /><span>החלף</span></button>
                     <button type="button" aria-label={`מחק ${item.aliyah}`} disabled={disabled} onClick={() => deleteItem(item)} className="text-rose-700 p-1 text-xs font-bold flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>מחק</span></button>
                   </div>
                   {movingId === item.id && (
@@ -339,11 +339,21 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                   setError(null);
                   setFile(selected);
                   setTitle(replacement?.aliyah ?? selected?.name.replace(/\.[^.]+$/, '') ?? '');
+                  if (replacement) setSection(getRecordingSection(replacement));
+                  else if (selected) {
+                    const inferred = classifyFileTitle(selected.name);
+                    setSection(inferred.category === 'haftarah' ? 'haftarah'
+                      : inferred.category === 'doc' || folder === 'כללי' || folder === 'תמונות' ? 'general' : 'torah');
+                  }
                 }} className="w-full text-sm" />
               </div>
               <div>
                 <label htmlFor="library-upload-name" className="block text-xs font-bold text-slate-700 mb-1">שם חומר הלימוד</label>
                 <input id="library-upload-name" type="text" required value={title} onChange={(event) => setTitle(event.target.value)} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-slate-700">סוג חומר הלימוד לתלמיד</p>
+                <RecordingSectionSelect label="סוג חומר הלימוד בהעלאה למאגר" value={section} onChange={setSection} disabled={disabled} />
               </div>
               <button type="submit" disabled={disabled || !file} className="w-full px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}

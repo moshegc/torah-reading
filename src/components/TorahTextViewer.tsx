@@ -18,6 +18,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import type { RecordingItem } from '../types';
+import { getRecordingSection, isDocument, sortRecordings } from '../utils/recordings';
 import {
   TextDisplayMode,
   TextFontSize,
@@ -125,12 +126,10 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
   // Filter studentPortions to those that have Sefaria text (Torah or Haftarah)
   const availableStudentPortions = useMemo(
     () =>
-      (studentPortions || []).filter(
+      sortRecordings((studentPortions || []).filter(
         (p) =>
-          p.category === 'shabbat' ||
-          p.category === 'chol' ||
-          p.category === 'haftarah'
-      ),
+          getRecordingSection(p) !== 'general' && !isDocument(p)
+      )),
     [studentPortions]
   );
 

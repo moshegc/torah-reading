@@ -1,11 +1,14 @@
 import type { ReadingPlan, HaftarahTradition } from './utils/readingPlan';
 
 
+export type RecordingSection = 'torah' | 'haftarah' | 'general';
+
 export interface RecordingItem {
   id: string;
   title: string;
   aliyah: string;
   category: 'shabbat' | 'chol' | 'haftarah' | 'blessings' | 'doc';
+  section?: RecordingSection;
   ext: 'm4a' | 'aac' | 'mp3' | 'pdf' | 'png' | 'jpg' | 'jpeg' | 'webp';
   resourceKey?: string | null;
   viewUrl: string;

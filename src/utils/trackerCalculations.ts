@@ -249,6 +249,7 @@ export function encodeStudentShareToken(student: StudentProfile): string {
       t: p.title,
       a: p.aliyah,
       c: p.category,
+      s: p.section,
       e: p.ext,
       r: p.resourceKey || undefined,
     }));
@@ -292,6 +293,7 @@ export function decodeStudentShareToken(token: string): Partial<StudentProfile> 
           title: p.t || p.a,
           aliyah: p.a,
           category: p.c || 'shabbat',
+          ...(p.s === 'torah' || p.s === 'haftarah' || p.s === 'general' ? { section: p.s } : {}),
           ext: p.e || 'aac',
           resourceKey: p.r || null,
           visible: true,

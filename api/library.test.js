@@ -66,6 +66,35 @@ beforeEach(() => {
 });
 
 describe('library changes', () => {
+  it('persists explicit student sections for uploaded audio and documents', () => {
+    const next = applyLibraryChange(fixture(), {
+      action: 'add-student-items', folder: 'כללי', studentId: 'visible-student',
+      items: [{ ...replacement, section: 'haftarah' }, { ...document, section: 'general' }],
+    }, 'teacher');
+    expect(next.parashaLibrary['כללי']).toContainEqual({ ...replacement, section: 'haftarah' });
+    expect(next.students[0].portions).toContainEqual({ ...replacement, section: 'haftarah' });
+  });
+
+  it('preserves each student section on file replacement', () => {
+    const data = fixture();
+    data.parashaLibrary['בראשית'][0].section = 'general';
+    data.students[0].portions[0].section = 'general';
+    data.students[1].portions[0].section = 'haftarah';
+    const next = applyLibraryChange(data, {
+      action: 'replace-item', folder: 'בראשית', itemId: recording.id,
+      item: { ...replacement, section: 'torah' },
+    }, 'teacher');
+    expect(next.students[0].portions[0]).toMatchObject({ section: 'general', category: 'blessings', visible: true });
+    expect(next.students[1].portions[0]).toMatchObject({ section: 'haftarah', category: 'haftarah', visible: false });
+    expect(next.parashaLibrary['בראשית'][0]).toMatchObject({ section: 'torah', category: 'shabbat' });
+  });
+
+  it('rejects an invalid student section', () => {
+    expect(() => applyLibraryChange(fixture(), {
+      action: 'add-item', folder: 'כללי', item: { ...replacement, section: 'invalid' },
+    }, 'teacher')).toThrow('אינם תקינים');
+  });
+
   it('moves a file without changing its identity, visibility or student assignments', () => {
     const data = fixture();
     const next = applyLibraryChange(data, {

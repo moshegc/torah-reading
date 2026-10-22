@@ -42,7 +42,8 @@ function validateItem(item, teacherId) {
   if (!item || typeof item.id !== 'string' || !item.id.trim() ||
       typeof item.title !== 'string' || !item.title.trim() ||
       typeof item.aliyah !== 'string' || typeof item.viewUrl !== 'string' ||
-      !extensions.includes(item.ext) || !categories.includes(item.category)) {
+      !extensions.includes(item.ext) || !categories.includes(item.category) ||
+      (item.section !== undefined && !['torah', 'haftarah', 'general'].includes(item.section))) {
     throw new LibraryError('פרטי חומר הלימוד אינם תקינים');
   }
   assertOwnedKey(item.r2Key, teacherId);
@@ -133,13 +134,22 @@ export function applyLibraryChange(data, change, teacherId) {
       if (change.action === 'replace-item') {
         removed = recordings(data).filter((item) => sameItem(item, target));
         validateItem(change.item, teacherId);
-        const replace = (item) => sameItem(item, target)
-          ? { ...change.item, id: item.id, visible: item.visible }
-          : item;
-        for (const name of Object.keys(library)) library[name] = library[name].map(replace);
+        const replace = (item, preserveSection) => {
+          if (!sameItem(item, target)) return item;
+          const section = preserveSection ? item.section ?? change.item.section : change.item.section;
+          const category = !section ? change.item.category
+            : ['pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(change.item.ext) ? 'doc'
+            : section === 'general' ? 'blessings' : section === 'haftarah' ? 'haftarah'
+            : item.category === 'chol' ? 'chol' : 'shabbat';
+          return {
+            ...change.item, id: item.id, visible: item.visible, category,
+            ...(section ? { section } : {}),
+          };
+        };
+        for (const name of Object.keys(library)) library[name] = library[name].map((item) => replace(item, false));
         students = students.map((student) => ({
           ...student,
-          portions: (student.portions || []).map(replace),
+          portions: (student.portions || []).map((item) => replace(item, true)),
         }));
       } else {
         library[folder] = items.filter((item) => item.id !== change.itemId);

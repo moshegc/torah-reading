@@ -30,6 +30,7 @@ import {
 import { AudioPlayerBar } from './AudioPlayerBar';
 import { AboutLink } from './AboutPage';
 import { TorahTextViewer } from './TorahTextViewer';
+import { getRecordingSection, isDocument, sortRecordings } from '../utils/recordings';
 
 interface StudentViewProps {
   student: StudentProfile;
@@ -40,9 +41,28 @@ interface StudentViewProps {
 
 type StudentTab = 'torah' | 'haftarah' | 'general';
 
+function DocumentLinks({ items, heading }: { items: RecordingItem[]; heading: string }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="pt-2">
+      <h3 className="text-xs font-bold text-slate-500 px-1 mb-2">{heading}</h3>
+      <div className="space-y-2">
+        {items.map((doc) => (
+          <a key={doc.id} href={getMediaStreamUrl(doc)} target="_blank" rel="noreferrer" className="w-full text-right p-3.5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0"><FileText className="w-4 h-4" /></div>
+              <div className="font-semibold text-sm text-slate-900 truncate">{doc.aliyah}</div>
+            </div>
+            <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1"><span>פתיחה</span><ExternalLink className="w-3.5 h-3.5" /></span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export const StudentView: React.FC<StudentViewProps> = ({
   student,
-  parashaLibrary = {},
   isTeacherPreview = false,
   onExitPreview,
 }) => {
@@ -76,36 +96,32 @@ export const StudentView: React.FC<StudentViewProps> = ({
   const stats = useMemo(() => calculateStudentStats(student), [student]);
 
   const visiblePortions = useMemo(
-    () => (student.portions || []).filter((p) => p.visible !== false),
+    () => sortRecordings((student.portions || []).filter((p) => p.visible !== false)),
     [student.portions]
   );
 
   const torahPortions = useMemo(
     () =>
       visiblePortions.filter(
-        (r) => r.category === 'shabbat' || r.category === 'chol'
+        (r) => getRecordingSection(r) === 'torah' && !isDocument(r)
       ),
     [visiblePortions]
   );
 
   const parashaDocs = useMemo(
-    () => visiblePortions.filter((r) => r.category === 'doc'),
+    () => visiblePortions.filter((r) => getRecordingSection(r) === 'torah' && isDocument(r)),
     [visiblePortions]
   );
 
   const haftarahPortions = useMemo(
-    () => visiblePortions.filter((r) => r.category === 'haftarah'),
+    () => visiblePortions.filter((r) => getRecordingSection(r) === 'haftarah' && !isDocument(r)),
     [visiblePortions]
   );
 
-  const generalMaterials = useMemo(
-    () => [...(parashaLibrary['כללי'] ?? []), ...(parashaLibrary['תמונות'] ?? [])]
-      .filter((item) => item.visible !== false),
-    [parashaLibrary]
-  );
-  const generalAudio = generalMaterials.filter((item) => item.category !== 'doc');
-  const generalDocs = generalMaterials.filter((item) => item.category === 'doc');
-  const haftarahBlessings = generalAudio.filter((item) => item.title.includes('הפטרה'));
+  const haftarahDocs = visiblePortions.filter((item) => getRecordingSection(item) === 'haftarah' && isDocument(item));
+  const generalMaterials = visiblePortions.filter((item) => getRecordingSection(item) === 'general');
+  const generalAudio = generalMaterials.filter((item) => !isDocument(item));
+  const generalDocs = generalMaterials.filter(isDocument);
 
   return (
     <div className="min-h-screen bg-slate-50 pb-40" dir="rtl">
@@ -439,37 +455,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               </div>
             )}
 
-            {parashaDocs.length > 0 && (
-              <div className="pt-2">
-                <h3 className="text-xs font-bold text-slate-500 px-1 mb-2">
-                  דפי עזר לפרשה
-                </h3>
-                <div className="space-y-2">
-                  {parashaDocs.map((doc) => (
-                    <a
-                      key={doc.id}
-                      href={getMediaStreamUrl(doc)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="w-full text-right p-3.5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                          <FileText className="w-4 h-4" />
-                        </div>
-                        <div className="font-semibold text-sm text-slate-900 truncate">
-                          {doc.aliyah}
-                        </div>
-                      </div>
-                      <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-lg shrink-0 flex items-center gap-1">
-                        <span>פתיחה</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </span>
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
+            <DocumentLinks items={parashaDocs} heading="דפי עזר לפרשה" />
           </div>
         )}
 
@@ -639,42 +625,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               )}
             </div>
 
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm px-1 mb-2.5">
-                ברכות וטעמי ההפטרה
-              </h3>
-              <div className="space-y-2.5">
-                {haftarahBlessings.map((rec) => {
-                  const isSelected = selectedRecording?.id === rec.id;
-                  return (
-                    <button
-                      key={rec.id}
-                      type="button"
-                      onClick={() => selectRecording(rec, true)}
-                      className={`w-full text-right p-3.5 rounded-2xl border transition flex items-center justify-between gap-3 ${
-                        isSelected
-                          ? 'bg-amber-50 border-amber-500'
-                          : 'bg-white border-slate-200 hover:border-amber-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                          <Play className="w-4 h-4 fill-current ml-0.5" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-bold text-slate-900 text-sm truncate">
-                            {rec.aliyah}
-                          </div>
-                        </div>
-                      </div>
-                      <span className="text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-xl shrink-0">
-                        {isSelected ? 'מנגן' : 'השמע'}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            <DocumentLinks items={haftarahDocs} heading="דפי עזר להפטרה" />
           </div>
         )}
 
