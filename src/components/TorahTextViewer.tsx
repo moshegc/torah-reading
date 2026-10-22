@@ -39,6 +39,7 @@ interface TorahTextViewerProps {
   defaultPortionKey?: PortionSelectorKey;
   compactHeader?: boolean;
   onClose?: () => void;
+  tradition?: 'ashkenazi' | 'sephardi';
 }
 
 const FONT_SIZE_ORDER: TextFontSize[] = ['sm', 'md', 'lg', 'xl'];
@@ -82,6 +83,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
   defaultPortionKey,
   compactHeader = false,
   onClose,
+  tradition,
 }) => {
   const initialPrefs = useMemo(() => loadStudentPreferences(studentId), [studentId]);
 
@@ -146,8 +148,9 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
         haftarahName,
         recording: effectiveRecording,
         overrideKey: overridePortionKey,
+        tradition,
       }),
-    [parashaName, haftarahName, effectiveRecording, overridePortionKey]
+    [parashaName, haftarahName, effectiveRecording, overridePortionKey, tradition]
   );
 
   const refsSignature = resolvedTarget ? resolvedTarget.refs.join('|') : '';

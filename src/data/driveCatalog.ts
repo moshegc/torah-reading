@@ -1,3 +1,5 @@
+import type { ReadingPlan, HaftarahTradition } from '../utils/readingPlan';
+
 export interface RecordingItem {
   id: string;
   title: string;
@@ -33,6 +35,8 @@ export interface StudentProfile {
   learnedHaftarahVerses: number; // פסוקים שלמדנו (הפטרה)
   driveFolderUrl?: string; // Optional Drive folder URL linked to this student
   portions: RecordingItem[]; // Portions linked to this student (teacher controls visibility)
+  readingPlan?: ReadingPlan; // Which parts of the parasha the student is going to learn
+  haftarahTradition?: HaftarahTradition; // Per-student override of the teacher's default tradition
 }
 
 export interface StudentComputedStats {

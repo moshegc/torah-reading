@@ -85,6 +85,8 @@ export default async function handler(req, res) {
         students: Array.isArray(body.students) ? body.students : [],
         haftarotMap: body.haftarotMap && typeof body.haftarotMap === 'object' ? body.haftarotMap : {},
         parashaLibrary: body.parashaLibrary || existingData?.parashaLibrary || {},
+        settings:
+          body.settings && typeof body.settings === 'object' ? body.settings : existingData?.settings || {},
         updatedAt: new Date().toISOString(),
       };
 

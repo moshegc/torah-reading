@@ -1,5 +1,6 @@
 import { StudentProfile, RecordingItem, DEFAULT_GAS_WEBAPP_URL } from '../data/driveCatalog';
 import { classifyFileTitle } from './trackerCalculations';
+import type { HaftarahTradition } from './readingPlan';
 
 export const STORAGE_KEY_GAS_URL = 'torah_trainer_gas_webapp_url';
 export const STORAGE_KEY_TEACHER_SESSION = 'torah_trainer_r2_teacher_session_v1';
@@ -15,10 +16,16 @@ export interface TeacherSession {
   token: string;
 }
 
+export interface TeacherSettings {
+  /** Haftarah tradition used for students that have no override of their own */
+  defaultHaftarahTradition?: HaftarahTradition;
+}
+
 export interface CloudAppData {
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
   parashaLibrary?: Record<string, RecordingItem[]>;
+  settings?: TeacherSettings;
   updatedAt: string;
 }
 
@@ -186,6 +193,7 @@ export async function saveR2TeacherData(params: {
   token: string;
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
+  settings?: TeacherSettings;
 }): Promise<{ updatedAt: string; storage: string; r2Configured: boolean }> {
   const res = await fetch('/api/r2-data', {
     method: 'POST',
@@ -198,6 +206,7 @@ export async function saveR2TeacherData(params: {
       token: params.token,
       students: params.students,
       haftarotMap: params.haftarotMap,
+      settings: params.settings,
     }),
   });
   const json = await res.json();

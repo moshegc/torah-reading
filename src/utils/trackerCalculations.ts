@@ -5,6 +5,7 @@ import {
   HAFTAROT_VERSE_COUNTS,
   RecordingItem,
 } from '../data/driveCatalog';
+import { findParashaOption } from '../data/parashaOptions';
 
 /**
  * Emulates Excel's DAYS360(start_date, end_date, FALSE)
@@ -73,7 +74,7 @@ export function lookupParashaVerses(parashaName: string): number {
   const found = PARASHA_META_LIST.find(
     (p) => p.name === clean || (clean === 'בחוקתי' && p.name === 'בחוקותי')
   );
-  return found ? found.verses : 0;
+  return found ? found.verses : findParashaOption(clean)?.verses ?? 0; // joint parashot, e.g. "ויקהל-פקודי"
 }
 
 export function lookupHaftarahVerses(

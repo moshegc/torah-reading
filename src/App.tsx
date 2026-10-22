@@ -26,6 +26,8 @@ import {
   fetchR2StudentData,
   saveR2TeacherData,
 } from './utils/cloudSync';
+import type { TeacherSettings } from './utils/cloudSync';
+import type { HaftarahTradition } from './utils/readingPlan';
 import {
   signInWithGooglePopup,
   getGoogleClientId,
@@ -84,6 +86,8 @@ export default function App() {
   const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [previewStudent, setPreviewStudent] = useState<StudentProfile | null>(null);
+  // Teacher-level settings (stored in the per-teacher JSON file)
+  const [teacherSettings, setTeacherSettings] = useState<TeacherSettings>({});
   const [parashaLibrary, setParashaLibrary] = useState<Record<string, RecordingItem[]>>({});
 
   // Student share link state (?teacher=XXX&student=YYY)
@@ -110,6 +114,8 @@ export default function App() {
   studentsRef.current = students;
   const haftarotRef = useRef(haftarotMap);
   haftarotRef.current = haftarotMap;
+  const settingsRef = useRef(teacherSettings);
+  settingsRef.current = teacherSettings;
   const sessionRef = useRef(teacherSession);
   sessionRef.current = teacherSession;
 
@@ -198,6 +204,9 @@ export default function App() {
           if (res.data.haftarotMap) {
             setHaftarotMap({ ...INITIAL_HAFTAROT, ...res.data.haftarotMap });
           }
+          if (res.data.settings) {
+            setTeacherSettings(res.data.settings);
+          }
           if (res.data.parashaLibrary) {
             setParashaLibrary(res.data.parashaLibrary);
           }
@@ -238,6 +247,7 @@ export default function App() {
           token: activeSession.token,
           students: nextStudents,
           haftarotMap: nextHaftarot,
+          settings: settingsRef.current,
         });
         setSyncStatus('saved');
         setLastSyncedAt(result.updatedAt);
@@ -294,6 +304,13 @@ export default function App() {
     syncToR2(studentsRef.current, nextHaftarot);
   };
 
+  const handleSetDefaultHaftarahTradition = (tradition: HaftarahTradition) => {
+    const next: TeacherSettings = { ...settingsRef.current, defaultHaftarahTradition: tradition };
+    settingsRef.current = next;
+    setTeacherSettings(next);
+    syncToR2(studentsRef.current, haftarotRef.current);
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -310,6 +327,9 @@ export default function App() {
         if (Array.isArray(result.data.students)) setStudents(result.data.students);
         if (result.data.haftarotMap) {
           setHaftarotMap({ ...INITIAL_HAFTAROT, ...result.data.haftarotMap });
+        }
+        if (result.data.settings) {
+          setTeacherSettings(result.data.settings);
         }
         if (result.data.parashaLibrary) {
           setParashaLibrary(result.data.parashaLibrary);
@@ -349,6 +369,9 @@ export default function App() {
         if (result.data.haftarotMap) {
           setHaftarotMap({ ...INITIAL_HAFTAROT, ...result.data.haftarotMap });
         }
+        if (result.data.settings) {
+          setTeacherSettings(result.data.settings);
+        }
         if (result.data.updatedAt) setLastSyncedAt(result.data.updatedAt);
       } else {
         setStudents(initialStudents);
@@ -386,6 +409,9 @@ export default function App() {
         setStudents(result.data.students);
         if (result.data.haftarotMap) {
           setHaftarotMap({ ...INITIAL_HAFTAROT, ...result.data.haftarotMap });
+        }
+        if (result.data.settings) {
+          setTeacherSettings(result.data.settings);
         }
         if (result.data.updatedAt) setLastSyncedAt(result.data.updatedAt);
       }
@@ -514,6 +540,8 @@ export default function App() {
         students={students}
         haftarotMap={haftarotMap}
         parashaLibrary={parashaLibrary}
+        defaultHaftarahTradition={teacherSettings.defaultHaftarahTradition ?? 'ashkenazi'}
+        onSetDefaultHaftarahTradition={handleSetDefaultHaftarahTradition}
         syncStatus={syncStatus}
         syncErrorMessage={syncErrorMessage}
         lastSyncedAt={lastSyncedAt}

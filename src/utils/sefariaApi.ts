@@ -1,5 +1,6 @@
 import { PARASHA_SEFARIA_REFS, ParashaSefariaRefs } from '../data/sefariaParashaRefs';
 import { RecordingItem } from '../data/driveCatalog';
+import { getJointParashaSefariaRefs } from './jointParashaRefs';
 
 export type TextDisplayMode = 'full' | 'no_nikud' | 'tikkun' | 'nikud_only';
 export type TextFontSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -117,6 +118,10 @@ export function findParashaRefs(parashaName?: string): ParashaSefariaRefs | null
   if (!norm) return null;
   const exact = PARASHA_SEFARIA_REFS.find((p) => p.heName === norm);
   if (exact) return exact;
+  // Joint parashot (e.g. "ויקהל-פקודי") must be resolved before the substring fallback below,
+  // which would otherwise match only the first of the two parashot.
+  const joint = getJointParashaSefariaRefs(norm);
+  if (joint) return joint;
   // Substring fallback (e.g., if raw string contains the parasha name)
   return (
     PARASHA_SEFARIA_REFS.find((p) => norm.includes(p.heName) || p.heName.includes(norm)) ||
@@ -206,7 +211,8 @@ export function buildSefariaWebUrl(ref: string): string {
 export function resolveHaftarahRefs(
   haftarahName?: string,
   parashaName?: string,
-  recording?: RecordingItem | null
+  recording?: RecordingItem | null,
+  tradition: 'ashkenazi' | 'sephardi' = 'ashkenazi'
 ): { label: string; refs: string[] } | null {
   const recText = recording ? `${recording.aliyah} ${recording.title}` : '';
 
@@ -225,20 +231,32 @@ export function resolveHaftarahRefs(
 
   // 2. Check if haftarahName matches a Parasha's Haftarah
   const byHaftarahProp = findParashaRefs(haftarahName);
-  if (byHaftarahProp && byHaftarahProp.haftarah.length > 0) {
-    return {
-      label: `הפטרת ${byHaftarahProp.heName}`,
-      refs: byHaftarahProp.haftarah,
-    };
+  if (byHaftarahProp) {
+    const list =
+      tradition === 'sephardi' && byHaftarahProp.haftarahSephardi?.length > 0
+        ? byHaftarahProp.haftarahSephardi
+        : byHaftarahProp.haftarah;
+    if (list && list.length > 0) {
+      return {
+        label: `הפטרת ${byHaftarahProp.heName}`,
+        refs: list,
+      };
+    }
   }
 
   // 3. Fallback to the student's Parasha Haftarah
   const byParashaProp = findParashaRefs(parashaName);
-  if (byParashaProp && byParashaProp.haftarah.length > 0) {
-    return {
-      label: `הפטרת ${byParashaProp.heName}`,
-      refs: byParashaProp.haftarah,
-    };
+  if (byParashaProp) {
+    const list =
+      tradition === 'sephardi' && byParashaProp.haftarahSephardi?.length > 0
+        ? byParashaProp.haftarahSephardi
+        : byParashaProp.haftarah;
+    if (list && list.length > 0) {
+      return {
+        label: `הפטרת ${byParashaProp.heName}`,
+        refs: list,
+      };
+    }
   }
 
   return null;
@@ -270,8 +288,9 @@ export function resolvePortionTarget(params: {
   haftarahName?: string;
   recording?: RecordingItem | null;
   overrideKey?: PortionSelectorKey | null;
+  tradition?: 'ashkenazi' | 'sephardi';
 }): ResolvedPortionTarget | null {
-  const { parashaName, haftarahName, recording, overrideKey } = params;
+  const { parashaName, haftarahName, recording, overrideKey, tradition = 'ashkenazi' } = params;
   const inferredParasha = inferParashaFromRecording(recording, parashaName);
   const parasha = findParashaRefs(inferredParasha);
 
@@ -281,7 +300,7 @@ export function resolvePortionTarget(params: {
   if (!portionKey) return null;
 
   if (portionKey === 'haftarah') {
-    const haft = resolveHaftarahRefs(haftarahName, inferredParasha, recording);
+    const haft = resolveHaftarahRefs(haftarahName, inferredParasha, recording, tradition);
     if (!haft) return null;
     return {
       parasha,
