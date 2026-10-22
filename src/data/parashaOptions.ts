@@ -95,3 +95,4 @@ export function getParashaVerseReading(name?: string | null): VerseReadingData |
   const option = findParashaOption(name);
   return option ? VERSE_READINGS.find((r) => r.id === option.readingId) : undefined;
 }
+

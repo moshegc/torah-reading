@@ -67,3 +67,4 @@ describe('joint parasha integration', () => {
     expect(getJointParashaSefariaRefs('ויקהל')).toBeNull();
   });
 });
+

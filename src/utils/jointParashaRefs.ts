@@ -36,3 +36,4 @@ export function getJointParashaSefariaRefs(name?: string | null): ParashaSefaria
     haftarahSephardi: reading.haftarahSephardi.map((h) => h.ref),
   };
 }
+

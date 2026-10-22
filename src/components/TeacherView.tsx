@@ -37,6 +37,15 @@ import {
   ROOT_DRIVE_FOLDER_URL,
   STUDENT_TRACKER_SHEET_URL,
 } from '../data/driveCatalog';
+import { PARASHA_OPTIONS } from '../data/parashaOptions';
+import { ReadingPlanPicker } from './ReadingPlanPicker';
+import {
+  EMPTY_READING_PLAN,
+  computePlanVerses,
+  isPlanEmpty,
+  type ReadingPlan,
+  type HaftarahTradition,
+} from '../utils/readingPlan';
 import {
   calculateStudentStats,
   formatDateIL,
@@ -69,6 +78,8 @@ interface TeacherViewProps {
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
   parashaLibrary?: Record<string, RecordingItem[]>;
+  defaultHaftarahTradition?: HaftarahTradition;
+  onSetDefaultHaftarahTradition?: (tradition: HaftarahTradition) => void;
   syncStatus: DriveSyncStatus;
   syncErrorMessage: string | null;
   lastSyncedAt: string | null;
@@ -117,6 +128,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   students,
   haftarotMap,
   parashaLibrary = {},
+  defaultHaftarahTradition = 'ashkenazi',
+  onSetDefaultHaftarahTradition,
   syncStatus,
   syncErrorMessage,
   lastSyncedAt,
@@ -155,9 +168,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [newParasha, setNewParasha] = useState('בראשית');
   const [newHaftarah, setNewHaftarah] = useState('בראשית');
   const [newBarMitzvahDate, setNewBarMitzvahDate] = useState('2027-01-01');
-  const [newParashaVerses, setNewParashaVerses] = useState(146);
+  const [newParashaVerses, setNewParashaVerses] = useState(0);
   const [newSkippedVerses, setNewSkippedVerses] = useState(0);
-  const [newHaftarahVerses, setNewHaftarahVerses] = useState(23);
+  const [newHaftarahVerses, setNewHaftarahVerses] = useState(0);
+  const [newReadingPlan, setNewReadingPlan] = useState<ReadingPlan>(EMPTY_READING_PLAN);
+  const [newHaftarahTradition, setNewHaftarahTradition] = useState<HaftarahTradition | undefined>(undefined);
   const [newFolderUrl, setNewFolderUrl] = useState('');
 
   // Bar mitzva calculator (inside Add Student modal)
@@ -189,8 +204,14 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       if (first) {
         setNewParasha(first);
         setNewHaftarah(first);
-        setNewParashaVerses(lookupParashaVerses(first));
-        setNewHaftarahVerses(lookupHaftarahVerses(first, haftarotMap));
+        if (!newReadingPlan.weekday && newReadingPlan.aliyot.length === 0 && !newReadingPlan.maftir && !newReadingPlan.haftarah) {
+          setNewParashaVerses(0);
+          setNewHaftarahVerses(0);
+        } else {
+          const computed = computePlanVerses(first, newReadingPlan, newHaftarahTradition ?? defaultHaftarahTradition);
+          setNewParashaVerses(computed.torah);
+          setNewHaftarahVerses(computed.haftarah);
+        }
       }
       const s = info.shabbatDate;
       setNewBarMitzvahDate(
@@ -562,6 +583,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       learnedParashaVerses: 0,
       haftarahVerses: Number(newHaftarahVerses) || 0,
       learnedHaftarahVerses: 0,
+      readingPlan: newReadingPlan,
+      haftarahTradition: newHaftarahTradition,
       driveFolderUrl: newFolderUrl.trim() || undefined,
       portions: initialPortions,
     };
@@ -573,6 +596,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     onAddStudent(created);
     setNewName('');
     setNewFolderUrl('');
+    setNewReadingPlan(EMPTY_READING_PLAN);
+    setNewHaftarahTradition(undefined);
+    setNewParashaVerses(0);
+    setNewHaftarahVerses(0);
     setShowAddStudentModal(false);
     openManageModal(created);
   };
@@ -693,6 +720,21 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </>
               )}
             </button>
+
+            {onSetDefaultHaftarahTradition && (
+              <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-1 text-xs text-slate-200">
+                <span className="text-slate-400 font-medium">נוסח:</span>
+                <select
+                  value={defaultHaftarahTradition}
+                  onChange={(e) => onSetDefaultHaftarahTradition(e.target.value as HaftarahTradition)}
+                  className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs font-bold"
+                  title="נוסח הפטרה כברירת מחדל למורה"
+                >
+                  <option value="ashkenazi">אשכנז</option>
+                  <option value="sephardi">ספרד</option>
+                </select>
+              </div>
+            )}
 
             <button
               type="button"
@@ -1059,30 +1101,45 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       </div>
 
                       {isEditing && (
-                        <div className="pt-2 mt-2 border-t border-slate-200 grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-[11px] text-slate-500 mb-0.5">
-                              פרשה
-                            </label>
-                            <select
-                              value={student.parasha}
-                              onChange={(e) => {
-                                const p = e.target.value;
-                                onUpdateStudent({
-                                  ...student,
-                                  parasha: p,
-                                  parashaVerses: lookupParashaVerses(p),
-                                });
-                              }}
-                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold"
-                            >
-                              {PARASHA_META_LIST.map((pm) => (
-                                <option key={pm.name} value={pm.name}>
-                                  {pm.name} ({pm.verses} פס׳)
-                                </option>
-                              ))}
-                            </select>
-                          </div>
+                        <div className="pt-2 mt-2 border-t border-slate-200 space-y-2">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[11px] text-slate-500 mb-0.5">
+                                פרשה
+                              </label>
+                              <select
+                                value={student.parasha}
+                                onChange={(e) => {
+                                  const p = e.target.value;
+                                  if (student.readingPlan && !isPlanEmpty(student.readingPlan)) {
+                                    const computed = computePlanVerses(
+                                      p,
+                                      student.readingPlan,
+                                      student.haftarahTradition ?? defaultHaftarahTradition
+                                    );
+                                    onUpdateStudent({
+                                      ...student,
+                                      parasha: p,
+                                      parashaVerses: computed.torah,
+                                      haftarahVerses: computed.haftarah,
+                                    });
+                                  } else {
+                                    onUpdateStudent({
+                                      ...student,
+                                      parasha: p,
+                                      parashaVerses: lookupParashaVerses(p),
+                                    });
+                                  }
+                                }}
+                                className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold"
+                              >
+                                {PARASHA_OPTIONS.map((po) => (
+                                  <option key={po.name} value={po.name}>
+                                    {po.name} ({po.verses} פס׳)
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
 
                           <div>
                             <label className="block text-[11px] text-slate-500 mb-0.5">
@@ -1155,6 +1212,24 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                                 })
                               }
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold"
+                            />
+                          </div>
+                          </div>
+                          <div className="pt-1">
+                            <ReadingPlanPicker
+                              parasha={student.parasha}
+                              plan={student.readingPlan}
+                              tradition={student.haftarahTradition}
+                              defaultTradition={defaultHaftarahTradition}
+                              onChange={({ plan, tradition, verses }) => {
+                                onUpdateStudent({
+                                  ...student,
+                                  readingPlan: plan,
+                                  haftarahTradition: tradition,
+                                  parashaVerses: verses.torah,
+                                  haftarahVerses: verses.haftarah,
+                                });
+                              }}
                             />
                           </div>
                         </div>
@@ -2115,14 +2190,20 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       const p = e.target.value;
                       setNewParasha(p);
                       setNewHaftarah(p);
-                      setNewParashaVerses(lookupParashaVerses(p));
-                      setNewHaftarahVerses(lookupHaftarahVerses(p, haftarotMap));
+                      if (!newReadingPlan.weekday && newReadingPlan.aliyot.length === 0 && !newReadingPlan.maftir && !newReadingPlan.haftarah) {
+                        setNewParashaVerses(0);
+                        setNewHaftarahVerses(0);
+                      } else {
+                        const computed = computePlanVerses(p, newReadingPlan, newHaftarahTradition ?? defaultHaftarahTradition);
+                        setNewParashaVerses(computed.torah);
+                        setNewHaftarahVerses(computed.haftarah);
+                      }
                     }}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   >
-                    {PARASHA_META_LIST.map((pm) => (
-                      <option key={pm.name} value={pm.name}>
-                        {pm.name} ({pm.verses} פס׳)
+                    {PARASHA_OPTIONS.map((po) => (
+                      <option key={po.name} value={po.name}>
+                        {po.name} ({po.verses} פס׳)
                       </option>
                     ))}
                   </select>
@@ -2152,6 +2233,19 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   </datalist>
                 </div>
               </div>
+
+              <ReadingPlanPicker
+                parasha={newParasha}
+                plan={newReadingPlan}
+                tradition={newHaftarahTradition}
+                defaultTradition={defaultHaftarahTradition}
+                onChange={({ plan, tradition, verses }) => {
+                  setNewReadingPlan(plan);
+                  setNewHaftarahTradition(tradition);
+                  setNewParashaVerses(verses.torah);
+                  setNewHaftarahVerses(verses.haftarah);
+                }}
+              />
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

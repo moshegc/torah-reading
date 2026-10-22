@@ -310,6 +310,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                 <TorahTextViewer
                   parashaName={student.parasha}
                   haftarahName={student.haftarah}
+                  tradition={student.haftarahTradition}
                   studentPortions={torahPortions}
                   studentId={student.id}
                   onClose={() => setStandaloneTorahReader(false)}
@@ -331,6 +332,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                 <TorahTextViewer
                   parashaName={student.parasha}
                   haftarahName={student.haftarah}
+                  tradition={student.haftarahTradition}
                   studentId={student.id}
                 />
               </div>
@@ -406,6 +408,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                         <TorahTextViewer
                           parashaName={student.parasha}
                           haftarahName={student.haftarah}
+                          tradition={student.haftarahTradition}
                           recording={rec}
                           studentPortions={torahPortions}
                           studentId={student.id}
@@ -496,6 +499,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                     <TorahTextViewer
                       parashaName={student.parasha}
                       haftarahName={student.haftarah}
+                      tradition={student.haftarahTradition}
                       studentPortions={haftarahPortions}
                       defaultPortionKey="haftarah"
                       studentId={student.id}
@@ -519,6 +523,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                   <TorahTextViewer
                     parashaName={student.parasha}
                     haftarahName={student.haftarah}
+                    tradition={student.haftarahTradition}
                     defaultPortionKey="haftarah"
                     studentId={student.id}
                   />
