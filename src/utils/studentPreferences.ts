@@ -1,13 +1,19 @@
+import type { TextDisplayMode, TextFontSize } from './sefariaApi';
+
 export interface StudentLocalPreferences {
   pitchShift: number; // in semitones, default 0 (no pitch shift)
   playbackRate: number; // speed multiplier, default 1.0
   isLooping: boolean; // default false
+  textDisplayMode: TextDisplayMode; // 'full' | 'no_nikud' | 'tikkun' | 'nikud_only'
+  textFontSize: TextFontSize; // 'sm' | 'md' | 'lg' | 'xl'
 }
 
 export const DEFAULT_STUDENT_PREFERENCES: StudentLocalPreferences = {
   pitchShift: 0,
   playbackRate: 1.0,
   isLooping: false,
+  textDisplayMode: 'full',
+  textFontSize: 'md',
 };
 
 const PREFS_STORAGE_PREFIX = 'torah_trainer_student_prefs_v1_';
@@ -35,6 +41,16 @@ export function loadStudentPreferences(studentId?: string): StudentLocalPreferen
         typeof parsed.isLooping === 'boolean'
           ? parsed.isLooping
           : DEFAULT_STUDENT_PREFERENCES.isLooping,
+      textDisplayMode:
+        typeof parsed.textDisplayMode === 'string' &&
+        ['full', 'no_nikud', 'tikkun', 'nikud_only'].includes(parsed.textDisplayMode)
+          ? (parsed.textDisplayMode as TextDisplayMode)
+          : DEFAULT_STUDENT_PREFERENCES.textDisplayMode,
+      textFontSize:
+        typeof parsed.textFontSize === 'string' &&
+        ['sm', 'md', 'lg', 'xl'].includes(parsed.textFontSize)
+          ? (parsed.textFontSize as TextFontSize)
+          : DEFAULT_STUDENT_PREFERENCES.textFontSize,
     };
   } catch {
     return { ...DEFAULT_STUDENT_PREFERENCES };

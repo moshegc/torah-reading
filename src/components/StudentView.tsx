@@ -33,6 +33,7 @@ import {
   formatPitchLabel,
 } from '../utils/studentPreferences';
 import { AudioPlayerBar } from './AudioPlayerBar';
+import { TorahTextViewer } from './TorahTextViewer';
 
 interface StudentViewProps {
   student: StudentProfile;
@@ -49,6 +50,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<StudentTab>('torah');
   const [selectedRecording, setSelectedRecording] = useState<RecordingItem | null>(null);
+  const [showTextPanel, setShowTextPanel] = useState<boolean>(true);
+  const [standaloneTorahReader, setStandaloneTorahReader] = useState<boolean>(false);
+  const [standaloneHaftarahReader, setStandaloneHaftarahReader] = useState<boolean>(false);
   const [previewDoc, setPreviewDoc] = useState<RecordingItem | null>(null);
   const [pitchShift, setPitchShift] = useState<number>(
     () => loadStudentPreferences(student.id).pitchShift
@@ -111,7 +115,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
       {/* Top Student Summary Header */}
       <header className="bg-gradient-to-br from-indigo-950 via-indigo-900 to-slate-900 text-white px-4 pt-6 pb-6 rounded-b-3xl shadow-md">
-        <div className="max-w-md mx-auto">
+        <div className="max-w-2xl mx-auto">
           <div className="flex items-center justify-between gap-2 mb-3">
             <span className="text-xs font-medium text-indigo-200 bg-white/10 px-3 py-1 rounded-full">
               לימוד בר מצווה
@@ -221,7 +225,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
         </div>
       </header>
 
-      <main className="max-w-md mx-auto px-4 mt-4">
+      <main className="max-w-2xl mx-auto px-4 mt-4">
         {/* 3 Mobile Tabs: Torah Reading, Haftarah, General */}
         <div className="grid grid-cols-3 gap-1.5 bg-slate-200/80 p-1.5 rounded-2xl mb-5">
           <button
@@ -267,74 +271,148 @@ export const StudentView: React.FC<StudentViewProps> = ({
         {/* TAB 1: TORAH READING */}
         {activeTab === 'torah' && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between px-1">
+            <div className="flex items-center justify-between gap-2 px-1">
               <h2 className="font-bold text-slate-800 text-base">
                 עליות ללימוד – פרשת {student.parasha}
               </h2>
-              <span className="text-xs text-slate-500 font-medium">
-                {torahPortions.length} הקלטות
-              </span>
+              <div className="flex items-center gap-2">
+                {torahPortions.length > 0 &&
+                  !(
+                    selectedRecording &&
+                    (selectedRecording.category === 'shabbat' ||
+                      selectedRecording.category === 'chol') &&
+                    showTextPanel
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => setStandaloneTorahReader((prev) => !prev)}
+                      className="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 px-2.5 py-1 rounded-xl flex items-center gap-1 transition"
+                    >
+                      <BookOpen className="w-3.5 h-3.5" />
+                      <span>
+                        {standaloneTorahReader ? 'הסתר פסוקים' : 'הצג פסוקי הפרשה'}
+                      </span>
+                    </button>
+                  )}
+                <span className="text-xs text-slate-500 font-medium">
+                  {torahPortions.length} הקלטות
+                </span>
+              </div>
             </div>
 
+            {standaloneTorahReader &&
+              !(
+                selectedRecording &&
+                (selectedRecording.category === 'shabbat' ||
+                  selectedRecording.category === 'chol') &&
+                showTextPanel
+              ) && (
+                <TorahTextViewer
+                  parashaName={student.parasha}
+                  haftarahName={student.haftarah}
+                  studentPortions={torahPortions}
+                  studentId={student.id}
+                  onClose={() => setStandaloneTorahReader(false)}
+                />
+              )}
+
             {torahPortions.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
-                <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-2" />
-                <p className="font-semibold text-slate-700 text-sm mb-1">
-                  טרם שויכו הקלטות קריאה בתורה
-                </p>
-                <p className="text-xs text-slate-500">
-                  המורה יוסיף עבורך את העליות הרלוונטיות לפרשת {student.parasha}.
-                </p>
+              <div className="space-y-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
+                  <BookOpen className="w-9 h-9 text-slate-300 mx-auto mb-2" />
+                  <p className="font-semibold text-slate-700 text-sm mb-1">
+                    טרם שויכו הקלטות שמע לפרשת {student.parasha}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    בינתיים ניתן לקרוא ולתרגל את פסוקי הפרשה מתוך ספריא (עם או בלי ניקוד וטעמים):
+                  </p>
+                </div>
+
+                <TorahTextViewer
+                  parashaName={student.parasha}
+                  haftarahName={student.haftarah}
+                  studentId={student.id}
+                />
               </div>
             ) : (
               <div className="space-y-2.5">
                 {torahPortions.map((rec) => {
                   const isSelected = selectedRecording?.id === rec.id;
                   return (
-                    <button
-                      key={rec.id}
-                      type="button"
-                      onClick={() => setSelectedRecording(rec)}
-                      className={`w-full text-right p-4 rounded-2xl border transition flex items-center justify-between gap-3 active:scale-[0.99] ${
-                        isSelected
-                          ? 'bg-indigo-50/90 border-indigo-600 shadow-xs'
-                          : 'bg-white border-slate-200 hover:border-indigo-300'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        <div
-                          className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition ${
-                            isSelected
-                              ? 'bg-indigo-600 text-white shadow-xs'
-                              : 'bg-indigo-50 text-indigo-600'
-                          }`}
-                        >
-                          {isSelected ? (
-                            <Volume2 className="w-5 h-5 animate-pulse" />
-                          ) : (
-                            <Play className="w-5 h-5 fill-current ml-0.5" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="font-bold text-slate-900 text-base truncate">
-                            {rec.aliyah}
-                          </div>
-                          <div className="text-xs text-slate-500 truncate mt-0.5">
-                            {rec.title}
-                          </div>
-                        </div>
-                      </div>
-
-                      <span
-                        className={`text-xs font-bold px-3 py-1.5 rounded-xl shrink-0 ${
+                    <div key={rec.id} className="space-y-2.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedRecording(rec);
+                          setShowTextPanel(true);
+                          setStandaloneTorahReader(false);
+                        }}
+                        className={`w-full text-right p-4 rounded-2xl border transition flex items-center justify-between gap-3 active:scale-[0.99] ${
                           isSelected
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-slate-100 text-slate-700'
+                            ? 'bg-indigo-50/90 border-indigo-600 shadow-xs'
+                            : 'bg-white border-slate-200 hover:border-indigo-300'
                         }`}
                       >
-                        {isSelected ? 'מנגן כעת' : 'השמע'}
-                      </span>
-                    </button>
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div
+                            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'bg-indigo-50 text-indigo-600'
+                            }`}
+                          >
+                            {isSelected ? (
+                              <Volume2 className="w-5 h-5 animate-pulse" />
+                            ) : (
+                              <Play className="w-5 h-5 fill-current ml-0.5" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-bold text-slate-900 text-base truncate">
+                              {rec.aliyah}
+                            </div>
+                            <div className="text-xs text-slate-500 truncate mt-0.5">
+                              {rec.title}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isSelected && (
+                            <span
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowTextPanel((prev) => !prev);
+                              }}
+                              className="text-xs font-bold px-2.5 py-1.5 rounded-xl bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
+                            >
+                              <BookOpen className="w-3.5 h-3.5" />
+                              <span>{showTextPanel ? 'הסתר טקסט' : 'הצג טקסט'}</span>
+                            </span>
+                          )}
+                          <span
+                            className={`text-xs font-bold px-3 py-1.5 rounded-xl shrink-0 ${
+                              isSelected
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-slate-100 text-slate-700'
+                            }`}
+                          >
+                            {isSelected ? 'מנגן כעת' : 'השמע'}
+                          </span>
+                        </div>
+                      </button>
+
+                      {isSelected && showTextPanel && (
+                        <TorahTextViewer
+                          parashaName={student.parasha}
+                          haftarahName={student.haftarah}
+                          recording={rec}
+                          studentPortions={torahPortions}
+                          studentId={student.id}
+                          onClose={() => setShowTextPanel(false)}
+                        />
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -378,76 +456,152 @@ export const StudentView: React.FC<StudentViewProps> = ({
         {activeTab === 'haftarah' && (
           <div className="space-y-5">
             <div>
-              <div className="flex items-center justify-between px-1 mb-2.5">
+              <div className="flex items-center justify-between gap-2 px-1 mb-2.5">
                 <h2 className="font-bold text-slate-800 text-base">
                   הפטרת {student.haftarah || student.parasha}
                 </h2>
-                {student.haftarahVerses > 0 && (
-                  <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-0.5 rounded-full">
-                    {student.learnedHaftarahVerses} / {student.haftarahVerses} פסוקים
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {haftarahPortions.length > 0 &&
+                    !(
+                      selectedRecording &&
+                      selectedRecording.category === 'haftarah' &&
+                      showTextPanel
+                    ) && (
+                      <button
+                        type="button"
+                        onClick={() => setStandaloneHaftarahReader((prev) => !prev)}
+                        className="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 px-2.5 py-1 rounded-xl flex items-center gap-1 transition"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                        <span>
+                          {standaloneHaftarahReader ? 'הסתר פסוקים' : 'הצג פסוקי ההפטרה'}
+                        </span>
+                      </button>
+                    )}
+                  {student.haftarahVerses > 0 && (
+                    <span className="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-0.5 rounded-full">
+                      {student.learnedHaftarahVerses} / {student.haftarahVerses} פסוקים
+                    </span>
+                  )}
+                </div>
               </div>
 
+              {standaloneHaftarahReader &&
+                !(
+                  selectedRecording &&
+                  selectedRecording.category === 'haftarah' &&
+                  showTextPanel
+                ) && (
+                  <div className="mb-3">
+                    <TorahTextViewer
+                      parashaName={student.parasha}
+                      haftarahName={student.haftarah}
+                      studentPortions={haftarahPortions}
+                      defaultPortionKey="haftarah"
+                      studentId={student.id}
+                      onClose={() => setStandaloneHaftarahReader(false)}
+                    />
+                  </div>
+                )}
+
               {haftarahPortions.length === 0 ? (
-                <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
-                  <ScrollText className="w-9 h-9 text-slate-300 mx-auto mb-2" />
-                  <p className="font-semibold text-slate-700 text-sm mb-1">
-                    טרם שויכה הקלטת הפטרה
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    בינתיים ניתן לתרגל למטה את ברכות ההפטרה וטעמי ההפטרה.
-                  </p>
+                <div className="space-y-4">
+                  <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
+                    <ScrollText className="w-9 h-9 text-slate-300 mx-auto mb-2" />
+                    <p className="font-semibold text-slate-700 text-sm mb-1">
+                      טרם שויכה הקלטת הפטרה
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      בינתיים ניתן לקרוא את פסוקי ההפטרה מתוך ספריא ולתרגל את ברכות ההפטרה למטה:
+                    </p>
+                  </div>
+
+                  <TorahTextViewer
+                    parashaName={student.parasha}
+                    haftarahName={student.haftarah}
+                    defaultPortionKey="haftarah"
+                    studentId={student.id}
+                  />
                 </div>
               ) : (
                 <div className="space-y-2.5">
                   {haftarahPortions.map((rec) => {
                     const isSelected = selectedRecording?.id === rec.id;
                     return (
-                      <button
-                        key={rec.id}
-                        type="button"
-                        onClick={() => setSelectedRecording(rec)}
-                        className={`w-full text-right p-4 rounded-2xl border transition flex items-center justify-between gap-3 ${
-                          isSelected
-                            ? 'bg-indigo-50/90 border-indigo-600 shadow-xs'
-                            : 'bg-white border-slate-200 hover:border-indigo-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3.5 min-w-0">
-                          <div
-                            className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
-                              isSelected
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-indigo-50 text-indigo-600'
-                            }`}
-                          >
-                            {isSelected ? (
-                              <Volume2 className="w-5 h-5 animate-pulse" />
-                            ) : (
-                              <Play className="w-5 h-5 fill-current ml-0.5" />
-                            )}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-bold text-slate-900 text-base truncate">
-                              {rec.aliyah}
-                            </div>
-                            <div className="text-xs text-slate-500 truncate mt-0.5">
-                              {rec.title}
-                            </div>
-                          </div>
-                        </div>
-
-                        <span
-                          className={`text-xs font-bold px-3 py-1.5 rounded-xl shrink-0 ${
+                      <div key={rec.id} className="space-y-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedRecording(rec);
+                            setShowTextPanel(true);
+                            setStandaloneHaftarahReader(false);
+                          }}
+                          className={`w-full text-right p-4 rounded-2xl border transition flex items-center justify-between gap-3 ${
                             isSelected
-                              ? 'bg-indigo-600 text-white'
-                              : 'bg-slate-100 text-slate-700'
+                              ? 'bg-indigo-50/90 border-indigo-600 shadow-xs'
+                              : 'bg-white border-slate-200 hover:border-indigo-300'
                           }`}
                         >
-                          {isSelected ? 'מנגן כעת' : 'השמע'}
-                        </span>
-                      </button>
+                          <div className="flex items-center gap-3.5 min-w-0">
+                            <div
+                              className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-indigo-50 text-indigo-600'
+                              }`}
+                            >
+                              {isSelected ? (
+                                <Volume2 className="w-5 h-5 animate-pulse" />
+                              ) : (
+                                <Play className="w-5 h-5 fill-current ml-0.5" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-900 text-base truncate">
+                                {rec.aliyah}
+                              </div>
+                              <div className="text-xs text-slate-500 truncate mt-0.5">
+                                {rec.title}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {isSelected && (
+                              <span
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShowTextPanel((prev) => !prev);
+                                }}
+                                className="text-xs font-bold px-2.5 py-1.5 rounded-xl bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
+                              >
+                                <BookOpen className="w-3.5 h-3.5" />
+                                <span>{showTextPanel ? 'הסתר טקסט' : 'הצג טקסט'}</span>
+                              </span>
+                            )}
+                            <span
+                              className={`text-xs font-bold px-3 py-1.5 rounded-xl shrink-0 ${
+                                isSelected
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-100 text-slate-700'
+                              }`}
+                            >
+                              {isSelected ? 'מנגן כעת' : 'השמע'}
+                            </span>
+                          </div>
+                        </button>
+
+                        {isSelected && showTextPanel && (
+                          <TorahTextViewer
+                            parashaName={student.parasha}
+                            haftarahName={student.haftarah}
+                            recording={rec}
+                            studentPortions={haftarahPortions}
+                            studentId={student.id}
+                            onClose={() => setShowTextPanel(false)}
+                          />
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -688,9 +842,13 @@ export const StudentView: React.FC<StudentViewProps> = ({
         parashaName={
           activeTab === 'general' ? 'ברכות וטעמים' : `פרשת ${student.parasha}`
         }
+        haftarahName={student.haftarah}
+        studentPortions={visiblePortions}
         studentId={student.id}
         pitchShift={pitchShift}
         onPitchShiftChange={handlePitchChange}
+        showTextExternally={showTextPanel}
+        onToggleTextExternally={() => setShowTextPanel((prev) => !prev)}
       />
     </div>
   );

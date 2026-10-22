@@ -10,3 +10,8 @@
     font-family: 'Heebo', 'Rubik', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 }
+
+.font-torah {
+  font-family: 'Noto Serif Hebrew', 'Frank Ruhl Libre', 'David Libre', 'SBL Hebrew', 'Ezra SIL', 'David', 'Times New Roman', serif;
+  font-feature-settings: "kern" 1, "liga" 1, "ccmp" 1, "mark" 1, "mkmk" 1;
+}

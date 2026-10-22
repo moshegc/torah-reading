@@ -50,6 +50,7 @@ import {
 } from '../utils/cloudSync';
 import type { DriveSyncStatus } from '../App';
 import { AudioPlayerBar } from './AudioPlayerBar';
+import { barMitzvaFromGregorian, barMitzvaFromHebrew, type BarMitzvaInfo } from '../utils/barMitzvaParsha';
 
 interface TeacherViewProps {
   students: StudentProfile[];
@@ -140,6 +141,47 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [newHaftarahVerses, setNewHaftarahVerses] = useState(23);
   const [newFolderUrl, setNewFolderUrl] = useState('');
 
+  // Bar mitzva calculator (inside Add Student modal)
+  const [dobMode, setDobMode] = useState<'gregorian' | 'hebrew'>('gregorian');
+  const [dobGregorian, setDobGregorian] = useState('');
+  const [dobAfterSunset, setDobAfterSunset] = useState(false);
+  const [dobHebDay, setDobHebDay] = useState(1);
+  const [dobHebMonth, setDobHebMonth] = useState(7);
+  const [dobHebYear, setDobHebYear] = useState(5780);
+  const [bmCalcResult, setBmCalcResult] = useState<BarMitzvaInfo | null>(null);
+  const [bmCalcError, setBmCalcError] = useState<string | null>(null);
+
+  const calculateBarMitzva = () => {
+    setBmCalcError(null);
+    try {
+      let info: BarMitzvaInfo;
+      if (dobMode === 'gregorian') {
+        const [y, m, d] = dobGregorian.split('-').map(Number);
+        if (!y || !m || !d) {
+          setBmCalcError('יש להזין תאריך לידה');
+          return;
+        }
+        info = barMitzvaFromGregorian(new Date(y, m - 1, d), dobAfterSunset);
+      } else {
+        info = barMitzvaFromHebrew({ day: dobHebDay, month: dobHebMonth, year: dobHebYear });
+      }
+      setBmCalcResult(info);
+      const first = info.parshaHe[0];
+      if (first) {
+        setNewParasha(first);
+        setNewHaftarah(first);
+        setNewParashaVerses(lookupParashaVerses(first));
+        setNewHaftarahVerses(lookupHaftarahVerses(first, haftarotMap));
+      }
+      const s = info.shabbatDate;
+      setNewBarMitzvahDate(
+        `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`
+      );
+    } catch {
+      setBmCalcResult(null);
+      setBmCalcError('תאריך לא תקין');
+    }
+  };
   // Manage Student Portions Modal State
   const [folderUrlInput, setFolderUrlInput] = useState('');
   const [isLoadingFolder, setIsLoadingFolder] = useState(false);
@@ -1756,6 +1798,96 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 />
               </div>
 
+              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-900">חישוב פרשת בר מצווה לפי תאריך לידה</span>
+                  <div className="flex gap-1 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setDobMode('gregorian')}
+                      className={`px-2 py-0.5 rounded-lg border ${dobMode === 'gregorian' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300'}`}
+                    >
+                      לועזי
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDobMode('hebrew')}
+                      className={`px-2 py-0.5 rounded-lg border ${dobMode === 'hebrew' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300'}`}
+                    >
+                      עברי
+                    </button>
+                  </div>
+                </div>
+
+                {dobMode === 'gregorian' ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={dobGregorian}
+                      onChange={(e) => setDobGregorian(e.target.value)}
+                      className="border border-slate-300 rounded-xl px-3 py-1.5 text-sm"
+                    />
+                    <label className="flex items-center gap-1 text-[11px] text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={dobAfterSunset}
+                        onChange={(e) => setDobAfterSunset(e.target.checked)}
+                      />
+                      נולד אחרי השקיעה
+                    </label>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={30}
+                      value={dobHebDay}
+                      onChange={(e) => setDobHebDay(Number(e.target.value) || 1)}
+                      className="w-16 border border-slate-300 rounded-xl px-2 py-1.5 text-sm"
+                    />
+                    <select
+                      value={dobHebMonth}
+                      onChange={(e) => setDobHebMonth(Number(e.target.value))}
+                      className="border border-slate-300 rounded-xl px-2 py-1.5 text-sm"
+                    >
+                      {([
+                        [7, 'תשרי'], [8, 'חשוון'], [9, 'כסלו'], [10, 'טבת'], [11, 'שבט'],
+                        [12, 'אדר (אדר א׳)'], [13, 'אדר ב׳'], [1, 'ניסן'], [2, 'אייר'],
+                        [3, 'סיוון'], [4, 'תמוז'], [5, 'אב'], [6, 'אלול'],
+                      ] as [number, string][]).map(([n, label]) => (
+                        <option key={n} value={n}>{label}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={5000}
+                      max={6000}
+                      value={dobHebYear}
+                      onChange={(e) => setDobHebYear(Number(e.target.value) || 5780)}
+                      className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm"
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={calculateBarMitzva}
+                  className="px-3 py-1.5 bg-indigo-600 text-white rounded-xl text-xs font-bold"
+                >
+                  חשב והחל
+                </button>
+                {bmCalcError && <p className="text-[11px] text-red-600">{bmCalcError}</p>}
+                {bmCalcResult && (
+                  <p className="text-[11px] text-slate-700 leading-relaxed">
+                    יום ההולדת ה-13: {bmCalcResult.barMitzvaHDate.render('he')} (
+                    {formatDateIL(bmCalcResult.barMitzvaDate)}).<br />
+                    שבת הקריאה: {formatDateIL(bmCalcResult.shabbatDate)} – פרשת{' '}
+                    <strong>{bmCalcResult.parshaHe.join(' - ')}</strong>
+                    {bmCalcResult.parshaHe.length > 1 && ' (פרשה כפולה – נבחרה הראשונה, ניתן לשנות)'}
+                  </p>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -2239,7 +2371,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
         </div>
       )}
 
-      <AudioPlayerBar recording={previewRecording} />
+      <AudioPlayerBar
+        recording={previewRecording}
+        parashaName={managingStudent?.parasha}
+        haftarahName={managingStudent?.haftarah}
+        studentPortions={managingStudent?.portions}
+      />
     </div>
   );
 };

@@ -11,6 +11,7 @@ import {
   Sliders,
   Minus,
   Plus,
+  BookOpen,
 } from 'lucide-react';
 import { RecordingItem } from '../data/driveCatalog';
 import { getMediaStreamUrl } from '../utils/trackerCalculations';
@@ -23,21 +24,30 @@ import {
   createVoicePitchGraph,
   VoicePitchGraph,
 } from '../utils/voicePitchShifter';
+import { TorahTextViewer } from './TorahTextViewer';
 
 interface AudioPlayerBarProps {
   recording: RecordingItem | null;
   parashaName?: string;
+  haftarahName?: string;
+  studentPortions?: RecordingItem[];
   studentId?: string;
   pitchShift?: number;
   onPitchShiftChange?: (nextPitch: number) => void;
+  showTextExternally?: boolean;
+  onToggleTextExternally?: () => void;
 }
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   recording,
   parashaName,
+  haftarahName,
+  studentPortions,
   studentId,
   pitchShift: controlledPitchShift,
   onPitchShiftChange,
+  showTextExternally,
+  onToggleTextExternally,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pitchGraphRef = useRef<VoicePitchGraph | null>(null);
@@ -56,10 +66,28 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     initialPrefs.pitchShift
   );
   const [showPitchPanel, setShowPitchPanel] = useState(false);
+  const [showInternalText, setShowInternalText] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const pitchShift =
     controlledPitchShift !== undefined ? controlledPitchShift : internalPitchShift;
+
+  const hasSefariaText =
+    recording &&
+    (recording.category === 'shabbat' ||
+      recording.category === 'chol' ||
+      recording.category === 'haftarah');
+
+  const isTextVisible =
+    showTextExternally !== undefined ? showTextExternally : showInternalText;
+
+  const handleToggleText = () => {
+    if (onToggleTextExternally) {
+      onToggleTextExternally();
+    } else {
+      setShowInternalText((prev) => !prev);
+    }
+  };
 
   // Reload local browser preferences when studentId changes
   useEffect(() => {
@@ -268,6 +296,21 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       />
 
       <div className="max-w-xl mx-auto flex flex-col gap-2">
+        {/* Standalone Sefaria Text Drawer (used when not rendered inline by parent view) */}
+        {!onToggleTextExternally && hasSefariaText && showInternalText && (
+          <div className="mb-1">
+            <TorahTextViewer
+              recording={recording}
+              parashaName={parashaName}
+              haftarahName={haftarahName}
+              studentPortions={studentPortions}
+              studentId={studentId}
+              compactHeader
+              onClose={() => setShowInternalText(false)}
+            />
+          </div>
+        )}
+
         {/* Track Info Row */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -283,16 +326,34 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             </div>
           </div>
 
-          <a
-            href={recording.viewUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg hover:bg-slate-100"
-            title="פתח קובץ מקורי ב-Google Drive"
-          >
-            <span>Drive</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {hasSefariaText && (
+              <button
+                type="button"
+                onClick={handleToggleText}
+                className={`text-xs font-bold flex items-center gap-1 px-2.5 py-1 rounded-lg transition ${
+                  isTextVisible
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                }`}
+                title="הצג/הסתר טקסט הפסוקים מספריא"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>פסוקים</span>
+              </button>
+            )}
+
+            <a
+              href={recording.viewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg hover:bg-slate-100"
+              title="פתח קובץ מקורי ב-Google Drive"
+            >
+              <span>Drive</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
         </div>
 
         {errorMsg && (
