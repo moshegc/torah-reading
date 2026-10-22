@@ -1,4 +1,4 @@
-import type { StudentProfile, RecordingItem } from '../types';
+import type { StudentProfile, RecordingItem, LibraryChange } from '../types';
 
 const DEFAULT_GAS_WEBAPP_URL =
   (import.meta as any).env?.VITE_GAS_WEBAPP_URL || '';
@@ -37,7 +37,34 @@ export interface CloudAppData {
   haftarotMap: Record<string, number>;
   parashaLibrary?: Record<string, RecordingItem[]>;
   settings?: TeacherSettings;
+  pendingMediaDeletes?: string[];
   updatedAt: string;
+}
+
+export class LibraryMutationError extends Error {
+  constructor(message: string, public readonly data?: CloudAppData) {
+    super(message);
+    this.name = 'LibraryMutationError';
+  }
+}
+
+export async function changeTeacherLibrary(token: string, change: LibraryChange): Promise<CloudAppData> {
+  const res = await fetch('/api/library', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(change),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.ok) {
+    const error = cloudRequestError(json.error, 'השינוי במאגר לא נשמר');
+    throw new LibraryMutationError(error.message, json.data);
+  }
+  if (!json.data || !Array.isArray(json.data.students) ||
+      !json.data.parashaLibrary || typeof json.data.parashaLibrary !== 'object' ||
+      Array.isArray(json.data.parashaLibrary)) {
+    throw new LibraryMutationError('השרת החזיר נתוני מאגר לא תקינים');
+  }
+  return json.data;
 }
 
 export function loadTeacherSession(): TeacherSession | null {

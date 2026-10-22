@@ -8,6 +8,8 @@ import {
   saveR2TeacherData,
   transferDriveFilesToR2,
   uploadLocalFileToR2,
+  changeTeacherLibrary,
+  LibraryMutationError,
 } from './cloudSync';
 
 afterEach(() => {
@@ -17,6 +19,44 @@ afterEach(() => {
 
 const teacher = { teacherId: 'test', token: 'test-token' };
 const saveParams = { ...teacher, students: [], haftarotMap: {} };
+
+describe('library management requests', () => {
+  it('sends authenticated folder changes and returns the saved teacher configuration', async () => {
+    const data = { students: [], haftarotMap: {}, parashaLibrary: { Custom: [] }, updatedAt: '2026-10-22T18:00:00Z' };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true, data }) }));
+    const change = { action: 'create-folder' as const, folder: 'Custom' };
+    await expect(changeTeacherLibrary('test-token', change)).resolves.toEqual(data);
+    expect(fetch).toHaveBeenCalledWith('/api/library', expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ Authorization: 'Bearer test-token' }),
+      body: JSON.stringify(change),
+    }));
+  });
+
+  it('keeps the updated configuration available when physical deletion fails', async () => {
+    const data = { students: [], parashaLibrary: {}, pendingMediaDeletes: ['media/test/library/file.mp3'] };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, json: async () => ({ ok: false, error: 'Deletion incomplete', data }),
+    }));
+    const request = changeTeacherLibrary('test-token', { action: 'retry-deletions' });
+    await expect(request).rejects.toBeInstanceOf(LibraryMutationError);
+    await expect(request).rejects.toMatchObject({ message: 'Deletion incomplete', data });
+  });
+
+  it('surfaces a failed mutation without inventing a successful result', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false, json: async () => ({ ok: false, error: 'Folder already exists' }),
+    }));
+    await expect(changeTeacherLibrary('test-token', { action: 'create-folder', folder: 'Custom' })).rejects.toThrow('Folder already exists');
+  });
+
+  it('rejects a malformed success response instead of clearing the teacher library', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ ok: true }),
+    }));
+    await expect(changeTeacherLibrary('test-token', { action: 'retry-deletions' })).rejects.toThrow('נתוני מאגר לא תקינים');
+  });
+});
 
 describe('student configuration', () => {
   it('loads the teacher-provided general library alongside the student', async () => {

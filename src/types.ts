@@ -23,6 +23,13 @@ export interface ParashaMeta {
   verses: number;
 }
 
+export type LibraryChange =
+  | { action: 'create-folder' | 'delete-folder'; folder: string }
+  | { action: 'add-item'; folder: string; item: RecordingItem }
+  | { action: 'replace-item'; folder: string; itemId: string; item: RecordingItem }
+  | { action: 'delete-item'; folder: string; itemId: string }
+  | { action: 'retry-deletions' };
+
 export interface StudentProfile {
   id: string;
   name: string;

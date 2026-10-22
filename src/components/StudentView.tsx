@@ -28,6 +28,7 @@ import {
   formatPitchLabel,
 } from '../utils/studentPreferences';
 import { AudioPlayerBar } from './AudioPlayerBar';
+import { AboutLink } from './AboutPage';
 import { TorahTextViewer } from './TorahTextViewer';
 
 interface StudentViewProps {
@@ -128,6 +129,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
             <span className="text-xs font-medium text-indigo-200 bg-white/10 px-3 py-1 rounded-full">
               לימוד בר מצווה
             </span>
+            <AboutLink />
             <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-200">
               <Calendar className="w-3.5 h-3.5 text-indigo-300" />
               <span>{formatDateIL(student.barMitzvahDate)}</span>
@@ -880,6 +882,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
       <AudioPlayerBar
         recording={selectedRecording}
+        onClose={() => setSelectedRecording(null)}
         parashaName={
           activeTab === 'general' ? 'ברכות וטעמים' : `פרשת ${student.parasha}`
         }

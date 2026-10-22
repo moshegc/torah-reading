@@ -97,4 +97,16 @@ describe('teacher-owned study materials', () => {
       parashaLibrary: updatedLibrary,
     }));
   });
+
+  it('does not let a regular data save discard pending permanent deletions', async () => {
+    r2GetJson.mockResolvedValue({
+      students: [student], parashaLibrary: library, pendingMediaDeletes: ['media/teacher/library/old.mp3'],
+    });
+    readJsonBody.mockResolvedValue({ students: [student], haftarotMap: {}, pendingMediaDeletes: [] });
+    r2PutJson.mockResolvedValue({ storage: 'r2' });
+    await handler({ method: 'POST', headers: {} }, response());
+    expect(r2PutJson).toHaveBeenCalledWith('teachers/teacher/data.json', expect.objectContaining({
+      pendingMediaDeletes: ['media/teacher/library/old.mp3'],
+    }));
+  });
 });

@@ -9,7 +9,7 @@ import {
   Cloud,
 } from 'lucide-react';
 import { HAFTAROT_VERSE_COUNTS as INITIAL_HAFTAROT } from './data/torahReference';
-import type { StudentProfile, RecordingItem } from './types';
+import type { StudentProfile, RecordingItem, LibraryChange } from './types';
 import { decodeStudentShareToken } from './utils/trackerCalculations';
 import {
   TeacherSession,
@@ -21,6 +21,8 @@ import {
   fetchR2TeacherData,
   fetchR2StudentData,
   saveR2TeacherData,
+  changeTeacherLibrary,
+  LibraryMutationError,
 } from './utils/cloudSync';
 import type { CloudAppData, TeacherSettings } from './utils/cloudSync';
 import type { HaftarahTradition } from './utils/readingPlan';
@@ -31,6 +33,7 @@ import {
 } from './utils/googleDrivePicker';
 import { StudentView } from './components/StudentView';
 import { TeacherView } from './components/TeacherView';
+import { AboutLink, AboutPage } from './components/AboutPage';
 
 const STORAGE_KEY_STUDENTS = 'torah_trainer_students_v3';
 const STORAGE_KEY_HAFTAROT = 'torah_trainer_haftarot_v1';
@@ -38,6 +41,10 @@ const STORAGE_KEY_HAFTAROT = 'torah_trainer_haftarot_v1';
 export type DriveSyncStatus = 'unconfigured' | 'idle' | 'saving' | 'saved' | 'error';
 
 export default function App() {
+  return new URLSearchParams(window.location.search).has('about') ? <AboutPage /> : <AppContent />;
+}
+
+function AppContent() {
   const urlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const studentParam = urlParams.get('student');
   const teacherParam = urlParams.get('teacher');
@@ -84,6 +91,7 @@ export default function App() {
   // Teacher-level settings (stored in the per-teacher JSON file)
   const [teacherSettings, setTeacherSettings] = useState<TeacherSettings>({});
   const [parashaLibrary, setParashaLibrary] = useState<Record<string, RecordingItem[]>>({});
+  const [pendingMediaDeletes, setPendingMediaDeletes] = useState<string[]>([]);
 
   // Student share link state (?teacher=XXX&student=YYY)
   const [cloudStudent, setCloudStudent] = useState<StudentProfile | null>(null);
@@ -111,8 +119,6 @@ export default function App() {
   haftarotRef.current = haftarotMap;
   const settingsRef = useRef(teacherSettings);
   settingsRef.current = teacherSettings;
-  const libraryRef = useRef(parashaLibrary);
-  libraryRef.current = parashaLibrary;
   const sessionRef = useRef(teacherSession);
   sessionRef.current = teacherSession;
 
@@ -121,6 +127,7 @@ export default function App() {
     setHaftarotMap({ ...INITIAL_HAFTAROT, ...data?.haftarotMap });
     setTeacherSettings(data?.settings ?? {});
     setParashaLibrary(data?.parashaLibrary ?? {});
+    setPendingMediaDeletes(data?.pendingMediaDeletes ?? []);
     setLastSyncedAt(data?.updatedAt ?? null);
   }, []);
 
@@ -221,8 +228,7 @@ export default function App() {
   const syncToR2 = useCallback(
     async (
       nextStudents: StudentProfile[],
-      nextHaftarot: Record<string, number>,
-      nextLibrary?: Record<string, RecordingItem[]>
+      nextHaftarot: Record<string, number>
     ) => {
       const activeSession = sessionRef.current;
       if (!activeSession?.teacher?.teacherId || !activeSession?.token) {
@@ -239,7 +245,6 @@ export default function App() {
           students: nextStudents,
           haftarotMap: nextHaftarot,
           settings: settingsRef.current,
-          parashaLibrary: nextLibrary,
         });
         setSyncStatus('saved');
         setLastSyncedAt(result.updatedAt);
@@ -302,17 +307,26 @@ export default function App() {
     syncToR2(studentsRef.current, haftarotRef.current);
   };
 
-  const handleAddLibraryItem = async (folder: string, item: RecordingItem): Promise<boolean> => {
-    const nextLibrary = {
-      ...libraryRef.current,
-      [folder]: [...(libraryRef.current[folder] ?? []).filter((existing) => existing.id !== item.id), item],
-    };
-    const saved = await syncToR2(studentsRef.current, haftarotRef.current, nextLibrary);
-    if (saved) {
-      libraryRef.current = nextLibrary;
-      setParashaLibrary(nextLibrary);
+  const handleChangeLibrary = async (change: LibraryChange): Promise<boolean> => {
+    const session = sessionRef.current;
+    if (!session?.token) {
+      setSyncStatus('error');
+      setSyncErrorMessage('יש להתחבר מחדש לחשבון המורה');
+      return false;
     }
-    return saved;
+    setSyncStatus('saving');
+    setSyncErrorMessage(null);
+    try {
+      const data = await changeTeacherLibrary(session.token, change);
+      applyTeacherData(data);
+      setSyncStatus('saved');
+      return true;
+    } catch (error) {
+      if (error instanceof LibraryMutationError && error.data) applyTeacherData(error.data);
+      setSyncStatus('error');
+      setSyncErrorMessage(error instanceof Error ? error.message : 'השינוי במאגר לא נשמר');
+      return false;
+    }
   };
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
@@ -509,7 +523,8 @@ export default function App() {
         students={students}
         haftarotMap={haftarotMap}
         parashaLibrary={parashaLibrary}
-        onAddLibraryItem={handleAddLibraryItem}
+        onChangeLibrary={handleChangeLibrary}
+        pendingDeletionCount={pendingMediaDeletes.length}
         defaultHaftarahTradition={teacherSettings.defaultHaftarahTradition ?? 'ashkenazi'}
         onSetDefaultHaftarahTradition={handleSetDefaultHaftarahTradition}
         syncStatus={syncStatus}
@@ -751,6 +766,10 @@ export default function App() {
             <span>המשך באמצעות חשבון Google</span>
           </button>
         </div>
+      </div>
+
+      <div className="text-center mt-5">
+        <AboutLink />
       </div>
 
       {/* Modal to configure Google Client ID if not set in env */}

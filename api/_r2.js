@@ -194,6 +194,26 @@ export async function r2PutJson(key, data) {
   return { key, storage: 'r2' };
 }
 
+export async function r2DeleteObject(key) {
+  if (!isR2Configured()) {
+    const fp = await localFilePath(key);
+    for (const file of [fp, `${fp}.meta.json`]) {
+      try {
+        await fs.unlink(file);
+      } catch (err) {
+        if (err?.code !== 'ENOENT') throw err;
+      }
+    }
+    return;
+  }
+
+  const signed = signR2Request({ method: 'DELETE', key });
+  const res = await fetch(signed.url, { method: 'DELETE', headers: signed.headers });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`R2 DELETE ${key} failed (${res.status})`);
+  }
+}
+
 export async function r2PutBuffer(key, buffer, contentType = 'application/octet-stream') {
   const buf = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
 

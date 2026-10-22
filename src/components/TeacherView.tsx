@@ -30,12 +30,12 @@ import {
   LogOut,
   HardDrive,
 } from 'lucide-react';
-import type { StudentProfile, RecordingItem } from '../types';
+import type { StudentProfile, RecordingItem, LibraryChange } from '../types';
 import { PARASHA_META_LIST } from '../data/torahReference';
 import { PARASHA_OPTIONS, sortHaftarahNames } from '../data/parashaOptions';
 import { ReadingPlanPicker } from './ReadingPlanPicker';
 import { DateInput } from './DateInput';
-import { TeacherLibraryUpload } from './TeacherLibraryUpload';
+import { TeacherLibraryManager } from './TeacherLibraryManager';
 import {
   EMPTY_READING_PLAN,
   computePlanVerses,
@@ -65,6 +65,7 @@ import {
 } from '../utils/googleDrivePicker';
 import type { DriveSyncStatus } from '../App';
 import { AudioPlayerBar } from './AudioPlayerBar';
+import { AboutLink } from './AboutPage';
 import { barMitzvaFromGregorian, barMitzvaFromHebrew, type BarMitzvaInfo } from '../utils/barMitzvaParsha';
 
 interface TeacherViewProps {
@@ -74,7 +75,8 @@ interface TeacherViewProps {
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
   parashaLibrary?: Record<string, RecordingItem[]>;
-  onAddLibraryItem: (folder: string, item: RecordingItem) => Promise<boolean>;
+  onChangeLibrary: (change: LibraryChange) => Promise<boolean>;
+  pendingDeletionCount: number;
   defaultHaftarahTradition?: HaftarahTradition;
   onSetDefaultHaftarahTradition?: (tradition: HaftarahTradition) => void;
   syncStatus: DriveSyncStatus;
@@ -124,7 +126,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   students,
   haftarotMap,
   parashaLibrary = {},
-  onAddLibraryItem,
+  onChangeLibrary,
+  pendingDeletionCount,
   defaultHaftarahTradition = 'ashkenazi',
   onSetDefaultHaftarahTradition,
   syncStatus,
@@ -150,7 +153,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showHaftarotModal, setShowHaftarotModal] = useState(false);
   const [showDriveSyncModal, setShowDriveSyncModal] = useState(false);
-  const [showLibraryUpload, setShowLibraryUpload] = useState(false);
+  const [showLibraryManager, setShowLibraryManager] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewRecording, setPreviewRecording] = useState<RecordingItem | null>(null);
 
@@ -683,13 +686,16 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <AboutLink />
             <button
               type="button"
-              onClick={() => setShowLibraryUpload(true)}
+              onClick={() => setShowLibraryManager(true)}
+              disabled={syncStatus === 'saving'}
               className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5"
             >
               <CloudUpload className="w-4 h-4" />
-              <span>העלאת חומרי לימוד</span>
+              <span>מאגר חומרי לימוד</span>
+              {pendingDeletionCount > 0 && <span className="text-amber-200 text-xs">({pendingDeletionCount} ממתינים למחיקה)</span>}
             </button>
             {/* Cloudflare R2 Cloud Save Status / Settings */}
             <button
@@ -2461,13 +2467,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
         </div>
       )}
 
-      {showLibraryUpload && (
-        <TeacherLibraryUpload
+      {showLibraryManager && (
+        <TeacherLibraryManager
           teacherId={teacherId}
           teacherToken={teacherToken}
-          folders={Object.keys(parashaLibrary)}
-          onSave={onAddLibraryItem}
-          onClose={() => setShowLibraryUpload(false)}
+          library={parashaLibrary}
+          pendingDeletionCount={pendingDeletionCount}
+          operationError={syncErrorMessage}
+          onChange={onChangeLibrary}
+          onClose={() => setShowLibraryManager(false)}
         />
       )}
 
@@ -2629,6 +2637,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
       <AudioPlayerBar
         recording={previewRecording}
+        onClose={() => setPreviewRecording(null)}
         parashaName={managingStudent?.parasha}
         haftarahName={managingStudent?.haftarah}
         studentPortions={managingStudent?.portions}

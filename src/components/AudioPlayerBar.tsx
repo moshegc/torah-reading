@@ -4,7 +4,7 @@ import {
   Pause,
   RotateCcw,
   RotateCw,
-  ExternalLink,
+  X,
   Volume2,
   Loader2,
   Sliders,
@@ -27,6 +27,7 @@ import { TorahTextViewer } from './TorahTextViewer';
 
 interface AudioPlayerBarProps {
   recording: RecordingItem | null;
+  onClose: () => void;
   parashaName?: string;
   haftarahName?: string;
   studentPortions?: RecordingItem[];
@@ -43,6 +44,7 @@ interface AudioPlayerBarProps {
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   recording,
+  onClose,
   parashaName,
   haftarahName,
   studentPortions,
@@ -129,6 +131,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       if (!graphInitPromiseRef.current) {
         graphInitPromiseRef.current = createVoicePitchGraph(audio, targetPitch)
           .then((graph) => {
+            if (audioRef.current !== audio) {
+              graph.dispose();
+              return null;
+            }
             pitchGraphRef.current = graph;
             attachedAudioElRef.current = audio;
             return graph;
@@ -176,6 +182,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !recording) return;
+    let cancelled = false;
 
     // Stop whatever was playing before switching to the new recording
     audio.pause();
@@ -193,22 +200,33 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     audio.loop = isLooping;
     audio.load();
 
-    if (!autoPlay) return;
-
     const startPlayback = async () => {
       if (pitchShift !== 0 || pitchGraphRef.current) {
         await ensurePitchGraph(pitchShift);
       }
+      if (cancelled) return;
       await audio.play();
+      if (cancelled) {
+        audio.pause();
+        return;
+      }
       setIsPlaying(true);
       setIsLoading(false);
     };
 
-    startPlayback().catch(() => {
-      // Autoplay may be blocked on initial load until user taps play
-      setIsPlaying(false);
-      setIsLoading(false);
-    });
+    if (autoPlay) {
+      startPlayback().catch(() => {
+        if (cancelled) return;
+        // Autoplay may be blocked on initial load until user taps play
+        setIsPlaying(false);
+        setIsLoading(false);
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      audio.pause();
+    };
   }, [recording?.id, recording?.customAudioDataUrl]);
 
   const togglePlay = async () => {
@@ -222,11 +240,19 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       if (pitchShift !== 0 || pitchGraphRef.current) {
         await ensurePitchGraph(pitchShift);
       }
+      if (audioRef.current !== audio) return;
       audio
         .play()
-        .then(() => setIsPlaying(true))
+        .then(() => {
+          if (audioRef.current !== audio) {
+            audio.pause();
+            return;
+          }
+          setIsPlaying(true);
+        })
         .catch(() => {
-          setErrorMsg('לא ניתן להפעיל את ההקלטה כרגע. נסו שוב או פתחו ב-Drive.');
+          if (audioRef.current !== audio) return;
+          setErrorMsg('לא ניתן להפעיל את ההקלטה כרגע. נסו שוב.');
         });
     }
   };
@@ -300,7 +326,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         onError={() => {
           setIsLoading(false);
           setIsPlaying(false);
-          setErrorMsg('שגיאה בטעינת הקובץ. ניתן לפתוח ישירות מ-Drive.');
+          setErrorMsg('שגיאה בטעינת הקובץ. נסו שוב מאוחר יותר.');
         }}
       />
 
@@ -352,30 +378,28 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               </button>
             )}
 
-            <a
-              href={recording.viewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1 shrink-0 px-2 py-1 rounded-lg hover:bg-slate-100"
-              title="פתח קובץ מקורי ב-Google Drive"
+            <button
+              type="button"
+              onClick={() => {
+                audioRef.current?.pause();
+                pitchGraphRef.current?.dispose();
+                pitchGraphRef.current = null;
+                attachedAudioElRef.current = null;
+                setIsPlaying(false);
+                onClose();
+              }}
+              className="text-slate-500 hover:text-indigo-600 flex items-center justify-center shrink-0 w-10 h-10 rounded-lg hover:bg-slate-100"
+              title="סגור נגן"
+              aria-label="סגור נגן"
             >
-              <span>Drive</span>
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
 
         {errorMsg && (
           <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
             <span>{errorMsg}</span>
-            <a
-              href={recording.viewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="font-bold underline ml-2"
-            >
-              נגן ב-Drive
-            </a>
           </div>
         )}
 

@@ -7,6 +7,7 @@ import r2AuthHandler from './api/r2-auth.js';
 import r2DataHandler from './api/r2-data.js';
 import r2MediaHandler from './api/r2-media.js';
 import r2TransferDriveHandler from './api/r2-transfer-drive.js';
+import libraryHandler from './api/library.js';
 
 function adaptVercelHandler(handler: any) {
   return async (req: any, res: any) => {
@@ -49,6 +50,7 @@ export default defineConfig(({ mode }) => {
           server.middlewares.use('/api/r2-auth', adaptVercelHandler(r2AuthHandler));
           server.middlewares.use('/api/r2-data', adaptVercelHandler(r2DataHandler));
           server.middlewares.use('/api/r2-media', adaptVercelHandler(r2MediaHandler));
+          server.middlewares.use('/api/library', adaptVercelHandler(libraryHandler));
           server.middlewares.use(
             '/api/r2-transfer-drive',
             adaptVercelHandler(r2TransferDriveHandler)
