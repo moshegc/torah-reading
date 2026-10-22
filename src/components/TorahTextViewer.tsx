@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   BookOpen,
   ExternalLink,
@@ -11,6 +11,8 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   AlignJustify,
   ListOrdered,
   RefreshCw,
@@ -40,6 +42,14 @@ interface TorahTextViewerProps {
   compactHeader?: boolean;
   onClose?: () => void;
   tradition?: 'ashkenazi' | 'sephardi';
+  /** Called when the prev/next arrows move to another assigned recording. */
+  onSelectRecording?: (recording: RecordingItem) => void;
+  /** Controlled fullscreen state */
+  isFullscreen?: boolean;
+  /** Fullscreen change handler */
+  onToggleFullscreen?: (fullscreen: boolean) => void;
+  /** Initial/default fullscreen state if uncontrolled */
+  defaultFullscreen?: boolean;
 }
 
 const FONT_SIZE_ORDER: TextFontSize[] = ['sm', 'md', 'lg', 'xl'];
@@ -84,6 +94,10 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
   compactHeader = false,
   onClose,
   tradition,
+  onSelectRecording,
+  isFullscreen: controlledFullscreen,
+  onToggleFullscreen,
+  defaultFullscreen = false,
 }) => {
   const initialPrefs = useMemo(() => loadStudentPreferences(studentId), [studentId]);
 
@@ -96,7 +110,17 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
   const [overridePortionKey, setOverridePortionKey] =
     useState<PortionSelectorKey | null>(defaultPortionKey || null);
   const [showPortionPicker, setShowPortionPicker] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [internalFullscreen, setInternalFullscreen] = useState(defaultFullscreen);
+  const isFullscreen =
+    controlledFullscreen !== undefined ? controlledFullscreen : internalFullscreen;
+
+  const toggleFullscreen = () => {
+    const next = !isFullscreen;
+    setInternalFullscreen(next);
+    onToggleFullscreen?.(next);
+  };
+
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   // Filter studentPortions to those that have Sefaria text (Torah or Haftarah)
   const availableStudentPortions = useMemo(
@@ -156,6 +180,12 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
   const refsSignature = resolvedTarget ? resolvedTarget.refs.join('|') : '';
 
   useEffect(() => {
+    if (contentRef.current) {
+      contentRef.current.scrollTop = 0;
+    }
+  }, [refsSignature]);
+
+  useEffect(() => {
     if (!resolvedTarget || resolvedTarget.refs.length === 0) {
       setFetchedData(null);
       return;
@@ -209,6 +239,32 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
     return null;
   }
 
+  // Previous / next portion navigation (RTL: right arrow = previous, left arrow = next)
+  const navIndex =
+    availableStudentPortions.length > 0
+      ? availableStudentPortions.findIndex((p) => p.id === effectiveRecording?.id)
+      : PORTION_SELECTOR_OPTIONS.findIndex((o) => o.key === resolvedTarget.portionKey);
+  const navCount =
+    availableStudentPortions.length > 0
+      ? availableStudentPortions.length
+      : PORTION_SELECTOR_OPTIONS.length;
+  const canGoPrev = navIndex > 0;
+  const canGoNext = navIndex >= 0 && navIndex < navCount - 1;
+  const goToPortion = (delta: number) => {
+    const nextIdx = navIndex + delta;
+    if (nextIdx < 0 || nextIdx >= navCount) return;
+    if (availableStudentPortions.length > 0) {
+      setOverrideRecording(availableStudentPortions[nextIdx]);
+      onSelectRecording?.(availableStudentPortions[nextIdx]);
+      setOverridePortionKey(null);
+    } else {
+      setOverrideRecording(null);
+      setOverridePortionKey(PORTION_SELECTOR_OPTIONS[nextIdx].key);
+    }
+    setShowPortionPicker(false);
+    setRevealedVerses({});
+  };
+
   const sizeConfig = FONT_SIZE_CLASSES[fontSize];
   const verses = fetchedData?.verses || [];
 
@@ -217,12 +273,22 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
       className={`bg-white border border-slate-200 shadow-xs overflow-hidden flex flex-col ${
         isFullscreen
           ? 'fixed inset-x-0 top-0 bottom-[128px] z-40 rounded-none border-0 shadow-2xl'
-          : 'rounded-2xl'
+          : 'rounded-2xl sticky top-0 z-30'
       }`}
       dir="rtl"
     >
       {/* Top Header Bar */}
-      <div className="bg-gradient-to-l from-indigo-950 via-indigo-900 to-slate-900 text-white px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="bg-gradient-to-l from-indigo-950 via-indigo-900 to-slate-900 text-white px-2 py-3 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => goToPortion(-1)}
+          disabled={!canGoPrev}
+          className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white transition shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+          title="הקטע הקודם"
+        >
+          <ChevronRight className="w-5 h-5" />
+        </button>
+        <div className="flex-1 min-w-0 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-xl bg-white/15 text-indigo-200 flex items-center justify-center shrink-0">
             <BookOpen className="w-4 h-4" />
@@ -268,7 +334,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
           {/* Fullscreen reader toggle */}
           <button
             type="button"
-            onClick={() => setIsFullscreen((prev) => !prev)}
+            onClick={toggleFullscreen}
             className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white transition"
             title={isFullscreen ? 'מזער תצוגה' : 'הגדל למסך מלא'}
           >
@@ -289,6 +355,16 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
             </button>
           )}
         </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => goToPortion(1)}
+          disabled={!canGoNext}
+          className="p-1.5 rounded-xl bg-white/15 hover:bg-white/25 text-white transition shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+          title="הקטע הבא"
+        >
+          <ChevronLeft className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Expandable Aliyah / Portion Picker aligned with student's assigned portions */}
@@ -309,6 +385,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
                       type="button"
                       onClick={() => {
                         setOverrideRecording(portionItem);
+                        onSelectRecording?.(portionItem);
                         setOverridePortionKey(null);
                         setShowPortionPicker(false);
                         setRevealedVerses({});
@@ -477,12 +554,13 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
 
       {/* Main Text Content Area */}
       <div
+        ref={contentRef}
         className={`p-4 sm:p-6 overflow-y-auto ${
           isFullscreen
             ? 'flex-1 bg-[#fdfbf7]'
             : compactHeader
-            ? 'max-h-[52vh] bg-[#fdfbf7]'
-            : 'max-h-[65vh] bg-[#fdfbf7]'
+            ? 'max-h-[calc(100vh-300px)] min-h-[120px] bg-[#fdfbf7]'
+            : 'max-h-[calc(100vh-300px)] min-h-[120px] bg-[#fdfbf7]'
         }`}
       >
         {isLoading ? (
@@ -614,15 +692,11 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
                         : undefined
                     }
                   >
-                    <span
-                      className={`font-sans font-bold text-indigo-600/85 mx-1 select-none ${sizeConfig.badge}`}
-                    >
-                      ({v.heVerse})
-                    </span>
+                    {textToShow !== v.withoutNikud && (<span className={`font-sans font-bold text-indigo-600/85 mx-1 select-none ${sizeConfig.badge}`}>({v.heVerse})</span>)}
                     <span>{textToShow}</span>{' '}
                   </span>
-                  {v.parashaBreak === 'פ' && <span className="block h-3" />}
-                  {v.parashaBreak === 'ס' && (
+                  {textToShow !== v.withoutNikud && v.parashaBreak === 'פ' && <span className="block h-3" />}
+                  {textToShow !== v.withoutNikud && v.parashaBreak === 'ס' && (
                     <span className="inline-block w-8" />
                   )}
                 </React.Fragment>
@@ -670,11 +744,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
                         : ''
                     }`}
                   >
-                    <span
-                      className={`font-sans font-extrabold text-indigo-600 shrink-0 select-none ${sizeConfig.badge}`}
-                    >
-                      {v.heVerse}
-                    </span>
+                    {textToShow !== v.withoutNikud && (<span className={`font-sans font-extrabold text-indigo-600 shrink-0 select-none ${sizeConfig.badge}`}>{v.heVerse}</span>)}
                     <div className={`font-torah text-slate-900 ${sizeConfig.single}`}>
                       {textToShow}
                     </div>

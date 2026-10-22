@@ -1995,13 +1995,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                             {rec.category !== 'doc' && (
                               <button
                                 type="button"
-                                onClick={() => setPreviewRecording(rec)}
+                                onClick={() => setPreviewRecording(isPlayingThis ? null : rec)}
                                 className={`p-2 rounded-xl text-xs font-semibold ${
                                   isPlayingThis
                                     ? 'bg-indigo-600 text-white'
                                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                                 }`}
-                                title="השמע לבדיקה"
+                                title={isPlayingThis ? 'עצור השמעה' : 'השמע לבדיקה'}
                               >
                                 {isPlayingThis ? (
                                   <Volume2 className="w-4 h-4 animate-pulse" />
@@ -2660,6 +2660,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
         parashaName={managingStudent?.parasha}
         haftarahName={managingStudent?.haftarah}
         studentPortions={managingStudent?.portions}
+        hideText
       />
     </div>
   );

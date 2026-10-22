@@ -4,7 +4,6 @@ import {
   Pause,
   RotateCcw,
   RotateCw,
-  Repeat,
   ExternalLink,
   Volume2,
   Loader2,
@@ -36,6 +35,10 @@ interface AudioPlayerBarProps {
   onPitchShiftChange?: (nextPitch: number) => void;
   showTextExternally?: boolean;
   onToggleTextExternally?: () => void;
+  /** Hide the Sefaria verse text entirely (e.g. teacher view). */
+  hideText?: boolean;
+  /** Start playing automatically when the recording changes (default true). */
+  autoPlay?: boolean;
 }
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
@@ -48,6 +51,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   onPitchShiftChange,
   showTextExternally,
   onToggleTextExternally,
+  hideText = false,
+  autoPlay = true,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pitchGraphRef = useRef<VoicePitchGraph | null>(null);
@@ -73,6 +78,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     controlledPitchShift !== undefined ? controlledPitchShift : internalPitchShift;
 
   const hasSefariaText =
+    !hideText &&
     recording &&
     (recording.category === 'shabbat' ||
       recording.category === 'chol' ||
@@ -171,8 +177,12 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     const audio = audioRef.current;
     if (!audio || !recording) return;
 
+    // Stop whatever was playing before switching to the new recording
+    audio.pause();
+    setIsPlaying(false);
+
     setErrorMsg(null);
-    setIsLoading(true);
+    setIsLoading(!autoPlay ? false : true);
     setCurrentTime(0);
     setDuration(0);
 
@@ -182,6 +192,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     audio.preservesPitch = true;
     audio.loop = isLooping;
     audio.load();
+
+    if (!autoPlay) return;
 
     const startPlayback = async () => {
       if (pitchShift !== 0 || pitchGraphRef.current) {
@@ -236,18 +248,15 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     }
   };
 
-  const toggleLoop = () => {
-    const next = !isLooping;
-    setIsLooping(next);
-    saveStudentPreferences(studentId, { isLooping: next });
-    if (audioRef.current) {
-      audioRef.current.loop = next;
-    }
-  };
+  const speedStepRef = useRef<number>(0);
 
   const cycleSpeed = () => {
-    const speeds = [1.0, 0.85, 0.75, 1.15];
-    const nextIdx = (speeds.indexOf(playbackRate) + 1) % speeds.length;
+    // 1.0 appears twice, so track the position in the cycle explicitly
+    const speeds = [1.0, 0.85, 0.75, 1.0, 1.15, 1.3, 1.5];
+    const cur = speedStepRef.current;
+    const stepValid = speeds[cur] === playbackRate;
+    const nextIdx = ((stepValid ? cur : speeds.indexOf(playbackRate)) + 1) % speeds.length;
+    speedStepRef.current = nextIdx;
     const nextSpeed = speeds[nextIdx];
     setPlaybackRate(nextSpeed);
     saveStudentPreferences(studentId, { playbackRate: nextSpeed });
@@ -269,7 +278,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] px-4 py-3">
+    <div className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] px-4 py-3">
       <audio
         ref={audioRef}
         crossOrigin="anonymous"
@@ -529,21 +538,6 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
               <RotateCw className="w-5 h-5" />
             </button>
           </div>
-
-          {/* Loop toggle */}
-          <button
-            type="button"
-            onClick={toggleLoop}
-            className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition ${
-              isLooping
-                ? 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-            title="ניגון חוזר בלופ"
-          >
-            <Repeat className="w-3.5 h-3.5" />
-            <span>לופ</span>
-          </button>
         </div>
       </div>
     </div>

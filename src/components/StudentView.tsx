@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   BookOpen,
   ScrollText,
@@ -51,6 +51,13 @@ export const StudentView: React.FC<StudentViewProps> = ({
   const [activeTab, setActiveTab] = useState<StudentTab>('torah');
   const [selectedRecording, setSelectedRecording] = useState<RecordingItem | null>(null);
   const [showTextPanel, setShowTextPanel] = useState<boolean>(true);
+  const [isTextFullscreen, setIsTextFullscreen] = useState<boolean>(true);
+  // Whether the next recording selection should start playing automatically
+  const autoplayRef = useRef<boolean>(true);
+  const selectRecording = (rec: RecordingItem, autoplay: boolean) => {
+    autoplayRef.current = autoplay;
+    setSelectedRecording(rec);
+  };
   const [standaloneTorahReader, setStandaloneTorahReader] = useState<boolean>(false);
   const [standaloneHaftarahReader, setStandaloneHaftarahReader] = useState<boolean>(false);
   const [previewDoc, setPreviewDoc] = useState<RecordingItem | null>(null);
@@ -285,7 +292,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                   ) && (
                     <button
                       type="button"
-                      onClick={() => setStandaloneTorahReader((prev) => !prev)}
+                      onClick={() => { setIsTextFullscreen(true); setStandaloneTorahReader((prev) => !prev); }}
                       className="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 px-2.5 py-1 rounded-xl flex items-center gap-1 transition"
                     >
                       <BookOpen className="w-3.5 h-3.5" />
@@ -314,6 +321,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
                   studentPortions={torahPortions}
                   studentId={student.id}
                   onClose={() => setStandaloneTorahReader(false)}
+                  onSelectRecording={(r) => selectRecording(r, false)}
+                  isFullscreen={isTextFullscreen}
+                  onToggleFullscreen={setIsTextFullscreen}
                 />
               )}
 
@@ -345,7 +355,8 @@ export const StudentView: React.FC<StudentViewProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          setSelectedRecording(rec);
+                          setIsTextFullscreen(true);
+                          selectRecording(rec, true);
                           setShowTextPanel(true);
                           setStandaloneTorahReader(false);
                         }}
@@ -384,7 +395,11 @@ export const StudentView: React.FC<StudentViewProps> = ({
                             <span
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setShowTextPanel((prev) => !prev);
+                                setShowTextPanel((prev) => {
+                                  const next = !prev;
+                                  if (next) setIsTextFullscreen(true);
+                                  return next;
+                                });
                               }}
                               className="text-xs font-bold px-2.5 py-1.5 rounded-xl bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
                             >
@@ -413,6 +428,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
                           studentPortions={torahPortions}
                           studentId={student.id}
                           onClose={() => setShowTextPanel(false)}
+                          onSelectRecording={(r) => selectRecording(r, false)}
+                          isFullscreen={isTextFullscreen}
+                          onToggleFullscreen={setIsTextFullscreen}
                         />
                       )}
                     </div>
@@ -472,7 +490,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                     ) && (
                       <button
                         type="button"
-                        onClick={() => setStandaloneHaftarahReader((prev) => !prev)}
+                        onClick={() => { setIsTextFullscreen(true); setStandaloneHaftarahReader((prev) => !prev); }}
                         className="text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 px-2.5 py-1 rounded-xl flex items-center gap-1 transition"
                       >
                         <BookOpen className="w-3.5 h-3.5" />
@@ -504,6 +522,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
                       defaultPortionKey="haftarah"
                       studentId={student.id}
                       onClose={() => setStandaloneHaftarahReader(false)}
+                      onSelectRecording={(r) => selectRecording(r, false)}
+                      isFullscreen={isTextFullscreen}
+                      onToggleFullscreen={setIsTextFullscreen}
                     />
                   </div>
                 )}
@@ -537,7 +558,8 @@ export const StudentView: React.FC<StudentViewProps> = ({
                         <button
                           type="button"
                           onClick={() => {
-                            setSelectedRecording(rec);
+                            setIsTextFullscreen(true);
+                            selectRecording(rec, true);
                             setShowTextPanel(true);
                             setStandaloneHaftarahReader(false);
                           }}
@@ -576,7 +598,11 @@ export const StudentView: React.FC<StudentViewProps> = ({
                               <span
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setShowTextPanel((prev) => !prev);
+                                  setShowTextPanel((prev) => {
+                                    const next = !prev;
+                                    if (next) setIsTextFullscreen(true);
+                                    return next;
+                                  });
                                 }}
                                 className="text-xs font-bold px-2.5 py-1.5 rounded-xl bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1"
                               >
@@ -604,6 +630,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
                             studentPortions={haftarahPortions}
                             studentId={student.id}
                             onClose={() => setShowTextPanel(false)}
+                            onSelectRecording={(r) => selectRecording(r, false)}
+                            isFullscreen={isTextFullscreen}
+                            onToggleFullscreen={setIsTextFullscreen}
                           />
                         )}
                       </div>
@@ -624,7 +653,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                     <button
                       key={rec.id}
                       type="button"
-                      onClick={() => setSelectedRecording(rec)}
+                      onClick={() => selectRecording(rec, true)}
                       className={`w-full text-right p-3.5 rounded-2xl border transition flex items-center justify-between gap-3 ${
                         isSelected
                           ? 'bg-amber-50 border-amber-500'
@@ -669,7 +698,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                     <button
                       key={rec.id}
                       type="button"
-                      onClick={() => setSelectedRecording(rec)}
+                      onClick={() => selectRecording(rec, true)}
                       className={`w-full text-right p-4 rounded-2xl border transition flex items-center justify-between gap-3 ${
                         isSelected
                           ? 'bg-indigo-50/90 border-indigo-600 shadow-xs'
@@ -853,7 +882,12 @@ export const StudentView: React.FC<StudentViewProps> = ({
         pitchShift={pitchShift}
         onPitchShiftChange={handlePitchChange}
         showTextExternally={showTextPanel}
-        onToggleTextExternally={() => setShowTextPanel((prev) => !prev)}
+        onToggleTextExternally={() => setShowTextPanel((prev) => {
+          const next = !prev;
+          if (next) setIsTextFullscreen(true);
+          return next;
+        })}
+        autoPlay={autoplayRef.current}
       />
     </div>
   );
