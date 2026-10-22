@@ -93,7 +93,12 @@ describe('teacher-owned study materials', () => {
     const unassignedFile = { id: 'unassigned-general', category: 'blessings', section: 'general' };
     r2GetJson.mockResolvedValue({
       students: [otherStudent, assignedStudent],
-      parashaLibrary: { ...library, 'כללי': [...library['כללי'], unassignedFile] },
+      parashaLibrary: {
+        ...library,
+        'בראשית': [portions[0]],
+        'כללי': [portions[2], unassignedFile],
+        'תמונות': [portions[3]],
+      },
     });
 
     const res = response();
@@ -128,6 +133,57 @@ describe('teacher-owned study materials', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       ok: true, student: assignedStudent, parashaLibrary: {},
     }));
+  });
+
+  it.each(['student', undefined])('uses the stored file category instead of stale student overrides (student=%s)', async (studentId) => {
+    const source = {
+      id: 'library-file', section: 'haftarah', category: 'haftarah', ext: 'mp3',
+      r2Key: 'media/teacher/library/shared.mp3', title: 'Original file', aliyah: 'Haftarah',
+    };
+    const assigned = {
+      ...source, id: 'student-copy', section: 'general', category: 'blessings', visible: false,
+    };
+    const data = {
+      students: [{ ...student, portions: [assigned] }],
+      parashaLibrary: { Custom: [source] },
+    };
+    r2GetJson.mockResolvedValue(data);
+    const res = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: studentId } }, res);
+    const payload = res.json.mock.calls[0][0];
+    const profile = studentId ? payload.student : payload.data.students[0];
+    expect(profile.portions).toEqual([{ ...assigned, section: 'haftarah', category: 'haftarah' }]);
+    expect(data.students[0].portions).toEqual([assigned]);
+    if (studentId) expect(payload.parashaLibrary).toEqual({});
+  });
+
+  it('does not persist a student category override submitted during a regular save', async () => {
+    const source = {
+      id: 'shared', category: 'haftarah', section: 'haftarah', ext: 'mp3',
+      r2Key: 'media/teacher/library/shared.mp3',
+    };
+    const assigned = { ...source, category: 'blessings', section: 'general', visible: true };
+    r2GetJson.mockResolvedValue({ parashaLibrary: { Custom: [source] } });
+    readJsonBody.mockResolvedValue({ students: [{ ...student, portions: [assigned] }] });
+    r2PutJson.mockResolvedValue({ storage: 'r2' });
+    await handler({ method: 'POST', headers: {} }, response());
+    expect(r2PutJson).toHaveBeenCalledWith('teachers/teacher/data.json', expect.objectContaining({
+      students: [{ ...student, portions: [{ ...assigned, section: 'haftarah', category: 'haftarah' }] }],
+    }));
+  });
+
+  it('uses a legacy file category even when a student copy has an explicit conflicting section', async () => {
+    const source = { id: 'legacy', category: 'blessings', ext: 'mp3' };
+    const assigned = { ...source, category: 'shabbat', section: 'torah', visible: true };
+    r2GetJson.mockResolvedValue({
+      students: [{ ...student, portions: [assigned] }],
+      parashaLibrary: { Custom: [source] },
+    });
+    const res = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
+    const returned = res.json.mock.calls[0][0].student.portions[0];
+    expect(returned).toEqual({ ...source, visible: true });
+    expect(returned).not.toHaveProperty('section');
   });
 
   it('returns only the requested student and no unassigned library folders', async () => {

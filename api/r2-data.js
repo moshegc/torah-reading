@@ -3,6 +3,7 @@
 
 import { r2GetJson, r2PutJson, readJsonBody, isR2Configured } from './_r2.js';
 import { sanitizeTeacherId, verifyTeacherToken } from './r2-auth.js';
+import { syncStudentFileCategories } from './_recordings.js';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -23,7 +24,7 @@ export default async function handler(req, res) {
       }
 
       const dataKey = `teachers/${teacherId}/data.json`;
-      const data = await r2GetJson(dataKey);
+      const data = syncStudentFileCategories(await r2GetJson(dataKey));
 
       if (!data) {
         return res.status(200).json({
@@ -82,7 +83,7 @@ export default async function handler(req, res) {
       const dataKey = `teachers/${teacherId}/data.json`;
       const existingData = await r2GetJson(dataKey);
 
-      const payload = {
+      const payload = syncStudentFileCategories({
         students: Array.isArray(body.students) ? body.students : [],
         haftarotMap: body.haftarotMap && typeof body.haftarotMap === 'object' ? body.haftarotMap : {},
         parashaLibrary: body.parashaLibrary || existingData?.parashaLibrary || {},
@@ -90,7 +91,7 @@ export default async function handler(req, res) {
         settings:
           body.settings && typeof body.settings === 'object' ? body.settings : existingData?.settings || {},
         updatedAt: new Date().toISOString(),
-      };
+      });
 
       const saved = await r2PutJson(dataKey, payload);
 

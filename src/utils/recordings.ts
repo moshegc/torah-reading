@@ -1,5 +1,11 @@
 import type { RecordingItem, RecordingSection } from '../types';
 
+export const RECORDING_SECTION_LABELS: Record<RecordingSection, string> = {
+  torah: 'קריאה בתורה',
+  haftarah: 'הפטרה',
+  general: 'כללי וטעמים',
+};
+
 export function isDocument(item: RecordingItem): boolean {
   return ['pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(item.ext);
 }

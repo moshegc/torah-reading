@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody } from './_r2.js';
 import { verifyTeacherToken } from './r2-auth.js';
 import handler, { applyLibraryChange } from './library.js';
+import dataHandler from './r2-data.js';
 
 vi.mock('./_r2.js', () => ({
   r2GetJson: vi.fn(),
   r2PutJson: vi.fn(),
   r2DeleteObject: vi.fn(),
   readJsonBody: vi.fn(),
+  isR2Configured: () => true,
 }));
 vi.mock('./r2-auth.js', () => ({
   sanitizeTeacherId: (value) => value,
@@ -66,16 +68,21 @@ beforeEach(() => {
 });
 
 describe('library changes', () => {
-  it('persists explicit student sections for uploaded audio and documents', () => {
+  it('persists upload file categories in the library and assigned copies', () => {
+    const documentUpload = {
+      ...document, id: 'new-document', r2Key: 'media/teacher/library/new-document.pdf', section: 'general',
+    };
     const next = applyLibraryChange(fixture(), {
       action: 'add-student-items', folder: 'כללי', studentId: 'visible-student',
-      items: [{ ...replacement, section: 'haftarah' }, { ...document, section: 'general' }],
+      items: [{ ...replacement, section: 'haftarah' }, documentUpload],
     }, 'teacher');
     expect(next.parashaLibrary['כללי']).toContainEqual({ ...replacement, section: 'haftarah' });
     expect(next.students[0].portions).toContainEqual({ ...replacement, section: 'haftarah' });
+    expect(next.parashaLibrary['כללי']).toContainEqual(documentUpload);
+    expect(next.students[0].portions).toContainEqual(documentUpload);
   });
 
-  it('preserves each student section on file replacement', () => {
+  it('uses the replacement file category for every student instead of preserving old overrides', () => {
     const data = fixture();
     data.parashaLibrary['בראשית'][0].section = 'general';
     data.students[0].portions[0].section = 'general';
@@ -84,12 +91,62 @@ describe('library changes', () => {
       action: 'replace-item', folder: 'בראשית', itemId: recording.id,
       item: { ...replacement, section: 'torah' },
     }, 'teacher');
-    expect(next.students[0].portions[0]).toMatchObject({ section: 'general', category: 'blessings', visible: true });
-    expect(next.students[1].portions[0]).toMatchObject({ section: 'haftarah', category: 'haftarah', visible: false });
+    expect(next.students[0].portions[0]).toMatchObject({ section: 'torah', category: 'shabbat', visible: true });
+    expect(next.students[1].portions[0]).toMatchObject({ section: 'torah', category: 'shabbat', visible: false });
     expect(next.parashaLibrary['בראשית'][0]).toMatchObject({ section: 'torah', category: 'shabbat' });
   });
 
-  it('rejects an invalid student section', () => {
+  it.each([
+    ['torah', 'shabbat'], ['haftarah', 'haftarah'], ['general', 'blessings'],
+  ])('changes an existing file to %s for all folders and students', (section, category) => {
+    const data = fixture();
+    data.parashaLibrary.shared = [{ ...recording, id: 'shared-id', visible: false }];
+    data.students[1].portions[0] = { ...recording, id: 'student-copy', visible: false, section: 'general' };
+    const next = applyLibraryChange(data, {
+      action: 'set-item-section', folder: 'בראשית', itemId: recording.id, section,
+    }, 'teacher');
+    expect(next.parashaLibrary['בראשית'][0]).toEqual({ ...recording, section, category });
+    expect(next.parashaLibrary.shared[0]).toEqual({ ...data.parashaLibrary.shared[0], section, category });
+    expect(next.students[0].portions[0]).toEqual({ ...recording, section, category });
+    expect(next.students[1].portions[0]).toEqual({ ...data.students[1].portions[0], section, category });
+    expect(next.students[0].portions[1]).toEqual(document);
+    expect(next.pendingMediaDeletes).toEqual([]);
+    expect(data.students[1].portions[0].section).toBe('general');
+  });
+
+  it.each(['pdf', 'png', 'jpg', 'jpeg', 'webp'])('keeps %s files as documents when changing their section', (ext) => {
+    const data = fixture();
+    data.parashaLibrary['כללי'][0].ext = ext;
+    const next = applyLibraryChange(data, {
+      action: 'set-item-section', folder: 'כללי', itemId: document.id, section: 'haftarah',
+    }, 'teacher');
+    expect(next.parashaLibrary['כללי'][0]).toMatchObject({ section: 'haftarah', category: 'doc', ext });
+    expect(next.students[0].portions[1]).toMatchObject({ section: 'haftarah', category: 'doc' });
+  });
+
+  it('keeps weekday Torah classification on a category edit', () => {
+    const data = fixture();
+    data.parashaLibrary['בראשית'][0].category = 'chol';
+    expect(applyLibraryChange(data, {
+      action: 'set-item-section', folder: 'בראשית', itemId: recording.id, section: 'torah',
+    }, 'teacher').students[0].portions[0]).toMatchObject({ section: 'torah', category: 'chol' });
+  });
+
+  it.each(['invalid', '', null])('rejects invalid file category %s without modifying assignments', (section) => {
+    const data = fixture();
+    expect(() => applyLibraryChange(data, {
+      action: 'set-item-section', folder: 'בראשית', itemId: recording.id, section,
+    }, 'teacher')).toThrow('סוג חומר לימוד תקין');
+    expect(data).toEqual(fixture());
+  });
+
+  it('rejects category edits to missing folders or files', () => {
+    const change = { action: 'set-item-section', folder: 'בראשית', itemId: recording.id, section: 'general' };
+    expect(() => applyLibraryChange(fixture(), { ...change, folder: 'missing' }, 'teacher')).toThrow('התיקייה אינה קיימת');
+    expect(() => applyLibraryChange(fixture(), { ...change, itemId: 'missing' }, 'teacher')).toThrow('חומר הלימוד אינו קיים');
+  });
+
+  it('rejects an invalid file section', () => {
     expect(() => applyLibraryChange(fixture(), {
       action: 'add-item', folder: 'כללי', item: { ...replacement, section: 'invalid' },
     }, 'teacher')).toThrow('אינם תקינים');
@@ -265,6 +322,7 @@ describe('persistent deletion workflow', () => {
     { action: 'rename-item', folder: 'בראשית', itemId: recording.id, name: 'Display label' },
     { action: 'rename-folder', folder: 'בראשית', name: 'Lessons' },
     { action: 'add-student-items', folder: 'נח', studentId: 'visible-student', items: [replacement] },
+    { action: 'set-item-section', folder: 'בראשית', itemId: recording.id, section: 'haftarah' },
   ])('persists $action without deleting media', async (change) => {
     const result = await request(change);
     expect(result.status).toBe(200);
@@ -272,6 +330,25 @@ describe('persistent deletion workflow', () => {
     expect(r2PutJson).toHaveBeenCalledTimes(1);
     expect(r2DeleteObject).not.toHaveBeenCalled();
     expect(stored).toEqual(result.body.data);
+  });
+
+  it('returns the persisted file category on subsequent student loads, preserving IDs and visibility', async () => {
+    const result = await request({
+      action: 'set-item-section', folder: 'בראשית', itemId: recording.id, section: 'haftarah',
+    });
+    expect(result.status).toBe(200);
+    for (const [studentId, visible] of [['visible-student', true], ['hidden-student', false]]) {
+      const res = response();
+      await dataHandler({ method: 'GET', query: { teacher: 'teacher', student: studentId } }, res);
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = res.json.mock.calls[0][0];
+      expect(payload.student.portions[0]).toEqual({
+        ...recording, section: 'haftarah', category: 'haftarah', visible,
+      });
+      expect(payload.parashaLibrary).toEqual({});
+    }
+    expect(stored.parashaLibrary['בראשית'][0]).toMatchObject({ section: 'haftarah', category: 'haftarah' });
+    expect(r2DeleteObject).not.toHaveBeenCalled();
   });
 
   it('requires a verified teacher session and never trusts a teacherId in the body', async () => {

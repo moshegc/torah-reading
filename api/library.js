@@ -1,5 +1,6 @@
 import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody } from './_r2.js';
 import { sanitizeTeacherId, verifyTeacherToken } from './r2-auth.js';
+import { sameRecording as sameItem, copyFileCategory, syncStudentFileCategories } from './_recordings.js';
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const extensions = ['aac', 'm4a', 'mp3', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
@@ -17,10 +18,6 @@ function assertOwnedKey(key, teacherId) {
       /[\\\0]/.test(key) || key.split('/').some((part) => part === '..' || part === '.')) {
     throw new LibraryError('לא ניתן לשנות קובץ שאינו שייך למאגר שלך', 403);
   }
-}
-
-function sameItem(a, b) {
-  return a.id === b.id || Boolean(a.r2Key && a.r2Key === b.r2Key);
 }
 
 function folderName(value) {
@@ -117,6 +114,21 @@ export function applyLibraryChange(data, change, teacherId) {
           ...student, portions: (student.portions || []).map(rename),
         }));
       }
+    } else if (change.action === 'set-item-section') {
+      const target = items.find((item) => item.id === change.itemId);
+      if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
+      if (!['torah', 'haftarah', 'general'].includes(change.section)) {
+        throw new LibraryError('יש לבחור סוג חומר לימוד תקין');
+      }
+      const category = ['pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(target.ext) ? 'doc'
+        : change.section === 'general' ? 'blessings' : change.section === 'haftarah' ? 'haftarah'
+        : target.category === 'chol' ? 'chol' : 'shabbat';
+      const source = { ...target, section: change.section, category };
+      const update = (item) => sameItem(item, target) ? copyFileCategory(item, source) : item;
+      for (const name of Object.keys(library)) library[name] = library[name].map(update);
+      students = students.map((student) => ({
+        ...student, portions: (student.portions || []).map(update),
+      }));
     } else if (change.action === 'add-item') {
       validateItem(change.item, teacherId);
       const existing = items.find((item) => item.id === change.item.id);
@@ -134,22 +146,12 @@ export function applyLibraryChange(data, change, teacherId) {
       if (change.action === 'replace-item') {
         removed = recordings(data).filter((item) => sameItem(item, target));
         validateItem(change.item, teacherId);
-        const replace = (item, preserveSection) => {
-          if (!sameItem(item, target)) return item;
-          const section = preserveSection ? item.section ?? change.item.section : change.item.section;
-          const category = !section ? change.item.category
-            : ['pdf', 'png', 'jpg', 'jpeg', 'webp'].includes(change.item.ext) ? 'doc'
-            : section === 'general' ? 'blessings' : section === 'haftarah' ? 'haftarah'
-            : item.category === 'chol' ? 'chol' : 'shabbat';
-          return {
-            ...change.item, id: item.id, visible: item.visible, category,
-            ...(section ? { section } : {}),
-          };
-        };
-        for (const name of Object.keys(library)) library[name] = library[name].map((item) => replace(item, false));
+        const replace = (item) => sameItem(item, target)
+          ? { ...change.item, id: item.id, visible: item.visible } : item;
+        for (const name of Object.keys(library)) library[name] = library[name].map(replace);
         students = students.map((student) => ({
           ...student,
-          portions: (student.portions || []).map((item) => replace(item, true)),
+          portions: (student.portions || []).map(replace),
         }));
       } else {
         library[folder] = items.filter((item) => item.id !== change.itemId);
@@ -173,7 +175,7 @@ export function applyLibraryChange(data, change, teacherId) {
     }));
   }
 
-  const next = { ...data, students, parashaLibrary: library, updatedAt: new Date().toISOString() };
+  const next = syncStudentFileCategories({ ...data, students, parashaLibrary: library, updatedAt: new Date().toISOString() });
   const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
   next.pendingMediaDeletes = [...new Set(removed.map((item) => item.r2Key).filter((key) => key && !retainedKeys.has(key)))];
   for (const key of next.pendingMediaDeletes) assertOwnedKey(key, teacherId);

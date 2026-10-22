@@ -33,6 +33,7 @@ export type LibraryChange =
   | { action: 'delete-item'; folder: string; itemId: string }
   | { action: 'rename-folder'; folder: string; name: string }
   | { action: 'rename-item'; folder: string; itemId: string; name: string }
+  | { action: 'set-item-section'; folder: string; itemId: string; section: RecordingSection }
   | { action: 'move-item'; folder: string; itemId: string; destination: string }
   | { action: 'add-student-items'; folder: string; studentId: string; items: RecordingItem[]; driveFolderUrl?: string }
   | { action: 'retry-deletions' };

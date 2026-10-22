@@ -3,6 +3,7 @@
 
 import crypto from 'node:crypto';
 import { r2GetJson, r2PutJson, readJsonBody, isR2Configured } from './_r2.js';
+import { syncStudentFileCategories } from './_recordings.js';
 
 const AUTH_SECRET =
   process.env.AUTH_SECRET ||
@@ -159,7 +160,7 @@ export default async function handler(req, res) {
           email: account.email,
         },
         token,
-        data: teacherData,
+        data: syncStudentFileCategories(teacherData),
         r2Configured: isR2Configured(),
       });
     }
@@ -196,7 +197,7 @@ export default async function handler(req, res) {
           email: account.email,
         },
         token,
-        data: teacherData,
+        data: syncStudentFileCategories(teacherData),
         r2Configured: isR2Configured(),
       });
     }
@@ -284,7 +285,7 @@ export default async function handler(req, res) {
           email: account.email,
         },
         token,
-        data: teacherData,
+        data: syncStudentFileCategories(teacherData),
         r2Configured: isR2Configured(),
       });
     }

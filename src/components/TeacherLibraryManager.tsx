@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CloudUpload, FileText, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { CloudUpload, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import type { LibraryChange, RecordingItem, RecordingSection } from '../types';
 import { PARASHA_OPTIONS } from '../data/parashaOptions';
 import { uploadLocalFileToR2 } from '../utils/cloudSync';
 import { classifyFileTitle, getMediaStreamUrl } from '../utils/trackerCalculations';
 import { getRecordingSection, withRecordingSection } from '../utils/recordings';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
+import { RecordingFileIcon } from './RecordingFileIcon';
 
 interface TeacherLibraryManagerProps {
   teacherId: string;
@@ -291,8 +292,13 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
               {items.map((item) => (
                 <li key={item.id} className="p-3 flex flex-wrap items-center justify-between gap-2">
                   <a href={getMediaStreamUrl(item)} target="_blank" rel="noreferrer" className="min-w-0 flex items-center gap-2 text-sm text-slate-800">
-                    <FileText className="w-4 h-4 shrink-0" /><span className="truncate">{item.aliyah}</span><span className="text-xs text-slate-400 uppercase">{item.ext}</span>
+                    <RecordingFileIcon item={item} /><span className="truncate">{item.aliyah}</span><span className="text-xs text-slate-400 uppercase">{item.ext}</span>
                   </a>
+                  <RecordingSectionSelect label={`סוג קובץ: ${item.aliyah}`} value={getRecordingSection(item)} disabled={disabled} onChange={(nextSection) => runAction(async () => {
+                    if (await mutate({ action: 'set-item-section', folder, itemId: item.id, section: nextSection }, 'סוג הקובץ עודכן במאגר ובכל שיוכי התלמידים.')) {
+                      if (replacementId === item.id) setSection(nextSection);
+                    }
+                  })} />
                   <div className="flex gap-2 shrink-0">
                     <button type="button" disabled={disabled} onClick={() => { setRenameTarget(item); setRenameName(item.aliyah); }} className="text-indigo-700 p-1 text-xs font-bold">שנה שם</button>
                     <button type="button" disabled={disabled || folderOptions.length < 2} onClick={() => { setMovingId(item.id); setDestination(folderOptions.find((name) => name !== folder) ?? ''); }} className="text-indigo-700 p-1 text-xs font-bold">העבר</button>

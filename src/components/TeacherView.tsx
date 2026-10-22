@@ -30,8 +30,9 @@ import {
   HardDrive,
 } from 'lucide-react';
 import type { StudentProfile, RecordingItem, RecordingSection, LibraryChange } from '../types';
-import { getRecordingSection, isDocument, sortRecordings, withRecordingSection } from '../utils/recordings';
+import { getRecordingSection, isDocument, RECORDING_SECTION_LABELS, sortRecordings, withRecordingSection } from '../utils/recordings';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
+import { RecordingFileIcon } from './RecordingFileIcon';
 import { PARASHA_OPTIONS, sortHaftarahNames } from '../data/parashaOptions';
 import { ReadingPlanPicker } from './ReadingPlanPicker';
 import { DateInput } from './DateInput';
@@ -237,7 +238,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [studentUploadFolder, setStudentUploadFolder] = useState('');
   const [studentLibraryFolder, setStudentLibraryFolder] = useState('');
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
-  const [librarySections, setLibrarySections] = useState<Record<string, RecordingSection>>({});
 
   const managingStudent = useMemo(
     () => students.find((s) => s.id === managingStudentId) || null,
@@ -277,7 +277,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     setStudentUploadFolder(defaultFolder);
     setStudentLibraryFolder(defaultFolder);
     setSelectedLibraryIds([]);
-    setLibrarySections({});
     setUploadSection('torah');
   };
 
@@ -1637,24 +1636,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             </div>
 
             <div className="p-5 overflow-y-auto space-y-5 flex-1">
-              <div>
-                <label htmlFor="student-upload-folder" className="block text-xs font-bold text-slate-800 mb-1">תיקייה לשמירת קבצים חדשים</label>
-                <select id="student-upload-folder" value={studentUploadFolder} onChange={(event) => setStudentUploadFolder(event.target.value)} disabled={isUploadingAudio || isLoadingFolder || isPickingFromDrive} className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm">
-                  {[...new Set([managingStudent.parasha.trim(), ...Object.keys(parashaLibrary)])].filter(Boolean).map((name) => (
-                    <option key={name} value={name}>{name}{Object.prototype.hasOwnProperty.call(parashaLibrary, name) ? '' : ' (תיקייה חדשה)'}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-slate-500 mt-1">הקבצים יישמרו גם במאגר וגם בשיוכי התלמיד. ברירת המחדל היא תיקיית הפרשה של התלמיד.</p>
-                <div className="mt-2">
-                  <RecordingSectionSelect label="סוג קבצים חדשים לתלמיד" value={uploadSection} onChange={setUploadSection} disabled={isUploadingAudio || isLoadingFolder || isPickingFromDrive} />
-                </div>
-              </div>
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
                 <label htmlFor="student-library-folder" className="block text-xs font-bold text-slate-800">בחירת קבצים מהמאגר</label>
                 <select id="student-library-folder" value={studentLibraryFolder} onChange={(event) => {
                   setStudentLibraryFolder(event.target.value);
                   setSelectedLibraryIds([]);
-                  setLibrarySections({});
                 }} className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm">
                   {[...new Set([studentLibraryFolder, ...Object.keys(parashaLibrary)])].filter(Boolean).map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
@@ -1670,9 +1656,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                             <input type="checkbox" checked={assigned || selectedLibraryIds.includes(item.id)} disabled={assigned} onChange={(event) => {
                               setSelectedLibraryIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id));
                             }} />
+                            <RecordingFileIcon item={item} />
                             <span>{item.aliyah}{assigned ? ' (כבר משויך)' : ''}</span>
                           </label>
-                          {!assigned && <RecordingSectionSelect label={`סוג לשיוך: ${item.aliyah}`} value={librarySections[item.id] ?? getRecordingSection(item)} onChange={(section) => setLibrarySections((sections) => ({ ...sections, [item.id]: section }))} />}
+                          <span className="text-xs text-slate-500">{RECORDING_SECTION_LABELS[getRecordingSection(item)]}</span>
                         </li>
                       );
                     })}
@@ -1682,11 +1669,28 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   const existingIds = new Set(managingStudent.portions.map((item) => item.id));
                   const additions = (parashaLibrary[studentLibraryFolder] ?? [])
                     .filter((item) => selectedLibraryIds.includes(item.id) && !existingIds.has(item.id))
-                    .map((item) => withRecordingSection({ ...item, visible: true }, librarySections[item.id] ?? getRecordingSection(item)));
+                    .map((item) => ({ ...item, visible: true }));
                   onUpdateStudent({ ...managingStudent, portions: [...managingStudent.portions, ...additions] });
                   setSelectedLibraryIds([]);
                 }} className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold disabled:opacity-50">שייך קבצים נבחרים לתלמיד</button>
               </div>
+              <section aria-label="העלאת קבצים חדשים" className="space-y-3 border border-slate-200 rounded-2xl p-3.5">
+                <h4 className="font-bold text-sm text-slate-800">העלאת קבצים חדשים</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="student-upload-folder" className="block text-xs font-bold text-slate-800 mb-1">תיקייה לשמירת קבצים חדשים</label>
+                    <select id="student-upload-folder" value={studentUploadFolder} onChange={(event) => setStudentUploadFolder(event.target.value)} disabled={isUploadingAudio || isLoadingFolder || isPickingFromDrive} className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm">
+                      {[...new Set([managingStudent.parasha.trim(), ...Object.keys(parashaLibrary)])].filter(Boolean).map((name) => (
+                        <option key={name} value={name}>{name}{Object.prototype.hasOwnProperty.call(parashaLibrary, name) ? '' : ' (תיקייה חדשה)'}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-800 mb-1">סוג הקבצים החדשים</p>
+                    <RecordingSectionSelect label="סוג קבצים חדשים לתלמיד" value={uploadSection} onChange={setUploadSection} disabled={isUploadingAudio || isLoadingFolder || isPickingFromDrive} />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500">הקבצים יישמרו במאגר ובשיוכי התלמיד. סוג הקובץ משותף לכל התלמידים.</p>
               {/* Option A: Direct Google Drive Picker OR Folder Link -> Transfer to R2 */}
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1874,6 +1878,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   </button>
                 </div>
               </form>
+              </section>
 
               {/* Current Portions List for this Student */}
               <div>
@@ -1962,8 +1967,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                             </button>
 
                             <div className="min-w-0">
-                              <div className="font-bold text-sm text-slate-900 truncate">
+                              <div className="font-bold text-sm text-slate-900 flex items-center gap-2">
+                                <RecordingFileIcon item={rec} />
+                                <span className="truncate">
                                 {rec.aliyah}
+                                </span>
                               </div>
                               <div className="text-xs text-slate-500 truncate">
                                 {rec.title}
@@ -1972,10 +1980,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                           </div>
 
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <RecordingSectionSelect label={`סוג לתלמיד: ${rec.aliyah}`} value={getRecordingSection(rec)} onChange={(section) => onUpdateStudent({
-                              ...managingStudent,
-                              portions: managingStudent.portions.map((item) => item.id === rec.id ? withRecordingSection(item, section) : item),
-                            })} />
+                            <span className="text-xs text-slate-500">{RECORDING_SECTION_LABELS[getRecordingSection(rec)]}</span>
                             {!isDocument(rec) && (
                               <button
                                 type="button"
