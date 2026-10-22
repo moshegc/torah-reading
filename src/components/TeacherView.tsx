@@ -10,6 +10,8 @@ import {
   Play,
   Plus,
   Trash2,
+  Archive,
+  ArchiveRestore,
   ExternalLink,
   AlertTriangle,
   BookOpen,
@@ -88,7 +90,6 @@ interface TeacherViewProps {
   onSetHaftarahLength: (name: string, verses: number) => void;
   onUpdateStudent: (updated: StudentProfile) => void;
   onAddStudent: (created: StudentProfile) => void;
-  onDeleteStudent: (studentId: string) => void;
   onPreviewStudent: (student: StudentProfile) => void;
 }
 
@@ -138,7 +139,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   onSetHaftarahLength,
   onUpdateStudent,
   onAddStudent,
-  onDeleteStudent,
   onPreviewStudent,
 }) => {
   const haftarahNames = useMemo(() => sortHaftarahNames(Object.keys(haftarotMap)), [haftarotMap]);
@@ -146,7 +146,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     () => sortHaftarahNames([...new Set([...haftarahNames, ...SPECIAL_HAFTAROT])]),
     [haftarahNames]
   );
-  const [viewMode, setViewMode] = useState<'cards' | 'table' | 'gantt'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'archive' | 'table' | 'gantt'>('cards');
+  const [includeArchivedInGantt, setIncludeArchivedInGantt] = useState(false);
+  const activeStudents = useMemo(() => students.filter((student) => !student.archived), [students]);
+  const archivedStudents = useMemo(() => students.filter((student) => student.archived), [students]);
   const ganttScrollRef = useRef<HTMLDivElement>(null);
   const ganttStudentHeaderRef = useRef<HTMLTableCellElement>(null);
   const ganttCurrentWeekRef = useRef<HTMLTableCellElement>(null);
@@ -165,7 +168,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       left: currentWeekRect.left + currentWeekRect.width / 2 - visibleCenter,
       behavior: 'auto',
     });
-  }, [viewMode]);
+  }, [viewMode, includeArchivedInGantt]);
 
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [managingStudentId, setManagingStudentId] = useState<string | null>(null);
@@ -334,9 +337,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
-  const confirmAndDeleteStudent = (student: StudentProfile) => {
-    if (window.confirm(`האם להסיר את התלמיד "${student.name}" מרשימת המעקב?`)) {
-      onDeleteStudent(student.id);
+  const confirmAndArchiveStudent = (student: StudentProfile) => {
+    if (window.confirm(`האם להעביר את התלמיד "${student.name}" לארכיון? כל הנתונים וההקלטות יישמרו וניתן יהיה לשחזר אותו.`)) {
+      onUpdateStudent({ ...student, archived: true });
     }
   };
 
@@ -620,7 +623,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const ganttData = useMemo(() => {
     const today = startOfWeekSunday(new Date());
 
-    const enriched = students
+    const enriched = (includeArchivedInGantt ? students : activeStudents)
       .map((student) => {
         const stats = calculateStudentStats(student);
         const bmDate = parseFlexibleDate(student.barMitzvahDate) || today;
@@ -665,7 +668,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     }
 
     return { today, weeks, rows: enriched };
-  }, [students]);
+  }, [students, activeStudents, includeArchivedInGantt]);
 
   return (
     <div className="min-h-screen bg-slate-100 pb-36" dir="rtl">
@@ -800,6 +803,18 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           </button>
           <button
             type="button"
+            onClick={() => setViewMode('archive')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition ${
+              viewMode === 'archive'
+                ? 'bg-indigo-600 text-white'
+                : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Archive className="w-3.5 h-3.5" />
+            <span>ארכיון ({archivedStudents.length})</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setViewMode('gantt')}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition ${
               viewMode === 'gantt'
@@ -828,9 +843,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-3">
-        {viewMode === 'cards' && (
+        {viewMode === 'archive' && (
+          <h2 className="font-extrabold text-lg text-slate-900 mb-3">תלמידים בארכיון</h2>
+        )}
+        {viewMode === 'archive' && archivedStudents.length === 0 && (
+          <p className="text-sm text-slate-500">אין תלמידים בארכיון.</p>
+        )}
+        {(viewMode === 'cards' || viewMode === 'archive') && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {students.map((student) => {
+            {(viewMode === 'archive' ? archivedStudents : activeStudents).map((student) => {
               const stats = calculateStudentStats(student);
               const isEditing = editingStudentId === student.id;
               const isHighPace = stats.versesPerLesson > 5;
@@ -850,6 +871,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                         <h2 className="font-extrabold text-lg text-slate-900">
                           {student.name}
                         </h2>
+                        {student.archived && (
+                          <span className="text-xs font-bold text-slate-500">בארכיון</span>
+                        )}
                         <div className="text-xs font-semibold text-indigo-700 flex flex-wrap items-center gap-1.5 mt-0.5">
                           <span>פרשת {student.parasha}</span>
                           <span>•</span>
@@ -863,11 +887,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                         </span>
                         <button
                           type="button"
-                          onClick={() => confirmAndDeleteStudent(student)}
-                          className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
-                          title={`מחק את התלמיד ${student.name}`}
+                          onClick={() => student.archived
+                            ? onUpdateStudent({ ...student, archived: false })
+                            : confirmAndArchiveStudent(student)}
+                          className="p-1.5 rounded-xl text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                          title={student.archived
+                            ? `שחזר את התלמיד ${student.name}`
+                            : `העבר את התלמיד ${student.name} לארכיון`}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          {student.archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
                         </button>
                       </div>
                     </div>
@@ -1302,6 +1330,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 <p className="text-xs text-slate-500">
                   מציג לכל תלמיד את טווח השבועות מתאריך ההתחלה המשוער ועד תאריך בר המצווה, כולל עומס תלמידים בכל שבוע
                 </p>
+                <label className="mt-2 flex items-center gap-2 text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={includeArchivedInGantt}
+                    onChange={(event) => setIncludeArchivedInGantt(event.target.checked)}
+                    className="accent-indigo-600"
+                  />
+                  הצג גם תלמידים בארכיון
+                </label>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-xs">
                 <span className="flex items-center gap-1.5">
@@ -1401,6 +1438,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-extrabold text-slate-900">
                               {student.name}
+                              {student.archived && (
+                                <span className="mr-1 text-[10px] font-normal text-slate-500">(בארכיון)</span>
+                              )}
                             </span>
                             <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
                               {student.parasha}
@@ -1503,7 +1543,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {students.map((student) => {
+                {activeStudents.map((student) => {
                   const st = calculateStudentStats(student);
                   const visCount = (student.portions || []).filter(
                     (p) => p.visible !== false
@@ -1617,11 +1657,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            onClick={() => confirmAndDeleteStudent(student)}
-                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50"
-                            title="מחק תלמיד"
+                            onClick={() => confirmAndArchiveStudent(student)}
+                            className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                            title={`העבר את התלמיד ${student.name} לארכיון`}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Archive className="w-4 h-4" />
                           </button>
                         </div>
                       </td>

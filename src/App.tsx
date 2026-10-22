@@ -272,12 +272,6 @@ function AppContent() {
     syncToR2(nextStudents, haftarotRef.current);
   };
 
-  const handleDeleteStudent = (studentId: string) => {
-    const nextStudents = studentsRef.current.filter((s) => s.id !== studentId);
-    setStudents(nextStudents);
-    syncToR2(nextStudents, haftarotRef.current);
-  };
-
   const handleSetHaftarahLength = (name: string, verses: number) => {
     const clean = name.trim();
     if (!clean) return;
@@ -528,7 +522,6 @@ function AppContent() {
         onSetHaftarahLength={handleSetHaftarahLength}
         onUpdateStudent={handleUpdateStudent}
         onAddStudent={handleAddStudent}
-        onDeleteStudent={handleDeleteStudent}
         onPreviewStudent={(st) => setPreviewStudent(st)}
       />
     );

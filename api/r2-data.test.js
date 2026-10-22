@@ -39,6 +39,43 @@ beforeEach(() => {
   });
 });
 
+describe('student archive persistence', () => {
+  it.each([true, false])('preserves student data and personal links when archived is %s', async (archived) => {
+    const recording = {
+      id: 'assigned-recording', category: 'shabbat', section: 'torah',
+      r2Key: 'media/teacher/library/assigned.mp3', visible: true,
+    };
+    const updatedStudent = {
+      ...student, archived, parasha: 'Test', barMitzvahDate: '2027-04-01',
+      learnedParashaVerses: 12, learnedHaftarahVerses: 5,
+      readingPlan: { weekday: false, aliyot: ['1'], maftir: false, haftarah: true }, portions: [recording],
+    };
+    const legacyStudent = { id: 'legacy', name: 'Legacy student', portions: [] };
+    const students = [updatedStudent, legacyStudent];
+    const parashaLibrary = { Test: [recording] };
+    r2GetJson.mockResolvedValue({ students, parashaLibrary });
+    readJsonBody.mockResolvedValue({ students, haftarotMap: {} });
+    r2PutJson.mockResolvedValue({ storage: 'r2' });
+
+    const saveResponse = response();
+    await handler({ method: 'POST', headers: {} }, saveResponse);
+    expect(saveResponse.status).toHaveBeenCalledWith(200);
+    expect(r2PutJson).toHaveBeenCalledWith('teachers/teacher/data.json', expect.objectContaining({
+      students, parashaLibrary,
+    }));
+
+    const storedData = r2PutJson.mock.calls[0][1];
+    r2GetJson.mockResolvedValue(JSON.parse(JSON.stringify(storedData)));
+    const teacherResponse = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher' } }, teacherResponse);
+    expect(teacherResponse.json.mock.calls[0][0].data.students).toEqual(students);
+
+    const studentResponse = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, studentResponse);
+    expect(studentResponse.json.mock.calls[0][0].student).toEqual(updatedStudent);
+  });
+});
+
 describe('teacher-owned study materials', () => {
   it.each([
     ['torah', 'shabbat', 'mp3'],

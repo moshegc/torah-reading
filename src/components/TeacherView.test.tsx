@@ -1,16 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TeacherView } from './TeacherView';
+import type { StudentProfile } from '../types';
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderHeader(syncStatus: 'saved' | 'saving' | 'error' = 'saved', pendingDeletionCount = 0) {
+function renderView(syncStatus: 'saved' | 'saving' | 'error' = 'saved', pendingDeletionCount = 0, students: StudentProfile[] = []) {
   vi.stubGlobal('window', { location: { href: 'https://example.com/?teacher=test' } });
-  const html = renderToStaticMarkup(
+  return renderToStaticMarkup(
     <TeacherView
       teacherId="test"
       teacherToken="test-token"
-      students={[]}
+      students={students}
       haftarotMap={{ 'בראשית': 31 }}
       onChangeLibrary={async () => true}
       pendingDeletionCount={pendingDeletionCount}
@@ -23,12 +24,36 @@ function renderHeader(syncStatus: 'saved' | 'saving' | 'error' = 'saved', pendin
       onSetHaftarahLength={vi.fn()}
       onUpdateStudent={vi.fn()}
       onAddStudent={vi.fn()}
-      onDeleteStudent={vi.fn()}
       onPreviewStudent={vi.fn()}
     />
   );
-  return html.match(/<header\b[^>]*>([\s\S]*?)<\/header>/)![1];
 }
+
+function renderHeader(syncStatus: 'saved' | 'saving' | 'error' = 'saved', pendingDeletionCount = 0) {
+  return renderView(syncStatus, pendingDeletionCount).match(/<header\b[^>]*>([\s\S]*?)<\/header>/)![1];
+}
+
+describe('student archive', () => {
+  it('shows legacy and explicitly active students but hides archived students from the default cards', () => {
+    const student: StudentProfile = {
+      id: 'legacy', name: 'Legacy student', parasha: 'Test', haftarah: 'Test',
+      barMitzvahDate: '2027-04-01', parashaVerses: 100, skippedVerses: 0,
+      learnedParashaVerses: 10, haftarahVerses: 30, learnedHaftarahVerses: 5, portions: [],
+    };
+    const html = renderView('saved', 0, [
+      student,
+      { ...student, id: 'active', name: 'Active student', archived: false },
+      { ...student, id: 'archived', name: 'Archived student', archived: true },
+    ]);
+    const main = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/)![1];
+    expect(main).toContain('Legacy student');
+    expect(main).toContain('Active student');
+    expect(main).not.toContain('Archived student');
+    expect(main).toContain('העבר את התלמיד Legacy student לארכיון');
+    expect(main).not.toContain('מחק');
+    expect(html).toContain('ארכיון (1)');
+  });
+});
 
 describe('teacher header', () => {
   it('groups primary actions and account links into two ordered RTL rows', () => {

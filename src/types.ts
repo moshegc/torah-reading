@@ -41,6 +41,7 @@ export type LibraryChange =
 export interface StudentProfile {
   id: string;
   name: string;
+  archived?: boolean;
   parasha: string;
   haftarah: string;
   barMitzvahDate: string; // YYYY-MM-DD
