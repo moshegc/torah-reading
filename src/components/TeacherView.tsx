@@ -22,7 +22,6 @@ import {
   Link as LinkIcon,
   Loader2,
   Calendar,
-  ScrollText,
   Cloud,
   CloudUpload,
   CheckCircle2,
@@ -33,7 +32,6 @@ import {
 import type { StudentProfile, RecordingItem, RecordingSection, LibraryChange } from '../types';
 import { getRecordingSection, isDocument, sortRecordings, withRecordingSection } from '../utils/recordings';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
-import { PARASHA_META_LIST } from '../data/torahReference';
 import { PARASHA_OPTIONS, sortHaftarahNames } from '../data/parashaOptions';
 import { ReadingPlanPicker } from './ReadingPlanPicker';
 import { DateInput } from './DateInput';
@@ -87,7 +85,6 @@ interface TeacherViewProps {
   onForceSync: () => Promise<boolean>;
   onLogout: () => void;
   onSetHaftarahLength: (name: string, verses: number) => void;
-  onDeleteHaftarahLength: (name: string) => void;
   onUpdateStudent: (updated: StudentProfile) => void;
   onAddStudent: (created: StudentProfile) => void;
   onDeleteStudent: (studentId: string) => void;
@@ -138,7 +135,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   onForceSync,
   onLogout,
   onSetHaftarahLength,
-  onDeleteHaftarahLength,
   onUpdateStudent,
   onAddStudent,
   onDeleteStudent,
@@ -153,7 +149,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [managingStudentId, setManagingStudentId] = useState<string | null>(null);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
-  const [showHaftarotModal, setShowHaftarotModal] = useState(false);
   const [showDriveSyncModal, setShowDriveSyncModal] = useState(false);
   const [showLibraryManager, setShowLibraryManager] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -166,10 +161,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [googleApiKeyInput, setGoogleApiKeyInput] = useState(() => getGoogleApiKey());
   const [showGoogleConfigPrompt, setShowGoogleConfigPrompt] = useState(false);
   const [isPickingFromDrive, setIsPickingFromDrive] = useState(false);
-
-  // Haftarah Table Modal Form State
-  const [newHaftarahEntryName, setNewHaftarahEntryName] = useState('');
-  const [newHaftarahEntryVerses, setNewHaftarahEntryVerses] = useState(22);
 
   // Add Student Form State
   const [newName, setNewName] = useState('');
@@ -681,18 +672,40 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <AboutLink />
-            <button
-              type="button"
-              onClick={() => setShowLibraryManager(true)}
-              disabled={syncStatus === 'saving'}
-              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5"
-            >
-              <CloudUpload className="w-4 h-4" />
-              <span>מאגר חומרי לימוד</span>
-              {pendingDeletionCount > 0 && <span className="text-amber-200 text-xs">({pendingDeletionCount} ממתינים למחיקה)</span>}
-            </button>
+          <div className="w-full flex flex-col items-start gap-2">
+            <div role="group" aria-label="פעולות מורה" className="w-full flex items-center gap-1 sm:gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAddStudentModal(true)}
+                className="px-2 sm:px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-xs transition"
+              >
+                <UserPlus className="hidden min-[360px]:block w-4 h-4 shrink-0" />
+                <span>תלמיד חדש</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLibraryManager(true)}
+                disabled={syncStatus === 'saving'}
+                className="px-2 sm:px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5"
+              >
+                <CloudUpload className="hidden min-[360px]:block w-4 h-4 shrink-0" />
+                <span>העלאת תוכן</span>
+                {pendingDeletionCount > 0 && <span className="text-amber-200 text-xs">({pendingDeletionCount} ממתינים למחיקה)</span>}
+              </button>
+              {onSetDefaultHaftarahTradition && (
+                <label className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-2 py-1 text-xs text-slate-200">
+                  <span className="sr-only sm:not-sr-only text-slate-400 font-medium">נוסח:</span>
+                  <select
+                    value={defaultHaftarahTradition}
+                    onChange={(e) => onSetDefaultHaftarahTradition(e.target.value as HaftarahTradition)}
+                    className="bg-slate-900 border border-slate-700 text-white rounded-lg px-1 sm:px-2 py-1 text-xs font-bold"
+                    title="נוסח הפטרה כברירת מחדל למורה"
+                  >
+                    <option value="ashkenazi">אשכנז</option>
+                    <option value="sephardi">ספרד</option>
+                  </select>
+                </label>
+              )}
             {/* Cloudflare R2 Cloud Save Status / Settings */}
             <button
               type="button"
@@ -700,7 +713,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 setSyncTestMessage(null);
                 setShowDriveSyncModal(true);
               }}
-              className={`px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 transition ${
+              className={`px-2 sm:px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 transition ${
                 syncStatus === 'saved'
                   ? 'bg-emerald-950/80 border-emerald-700 text-emerald-300 hover:bg-emerald-900'
                   : syncStatus === 'saving'
@@ -734,48 +747,19 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               )}
             </button>
 
-            {onSetDefaultHaftarahTradition && (
-              <div className="flex items-center gap-1.5 bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-1 text-xs text-slate-200">
-                <span className="text-slate-400 font-medium">נוסח:</span>
-                <select
-                  value={defaultHaftarahTradition}
-                  onChange={(e) => onSetDefaultHaftarahTradition(e.target.value as HaftarahTradition)}
-                  className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs font-bold"
-                  title="נוסח הפטרה כברירת מחדל למורה"
-                >
-                  <option value="ashkenazi">אשכנז</option>
-                  <option value="sephardi">ספרד</option>
-                </select>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setShowHaftarotModal(true)}
-              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-bold flex items-center gap-1.5 transition"
-            >
-              <ScrollText className="w-4 h-4 text-indigo-400" />
-              <span>אורכי הפטרות ({Object.keys(haftarotMap).length})</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowAddStudentModal(true)}
-              className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-xs transition"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>תלמיד חדש</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onLogout}
-              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/80 text-slate-300 hover:text-rose-200 border border-slate-700 hover:border-rose-700 text-xs font-bold flex items-center gap-1.5 transition"
-              title="התנתק מחשבון מורה"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">יציאה</span>
-            </button>
+            </div>
+            <div role="group" aria-label="חשבון ומידע" className="w-full flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={onLogout}
+                className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/80 text-slate-300 hover:text-rose-200 border border-slate-700 hover:border-rose-700 text-xs font-bold flex items-center gap-1.5 transition"
+                title="התנתק מחשבון מורה"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>יציאה</span>
+              </button>
+              <AboutLink />
+            </div>
           </div>
         </div>
       </header>
@@ -2339,134 +2323,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </button>
             </div>
           </form>
-        </div>
-      )}
-
-      {/* MODAL 3: MANAGE HAFTARAH LENGTHS TABLE */}
-      {showHaftarotModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
-              <div>
-                <h3 className="font-extrabold text-lg">טבלת אורכי הפטרות (מספר פסוקים)</h3>
-                <p className="text-xs text-slate-300">
-                  הוסף או עדכן את מספר הפסוקים של כל הפטרה לחישוב אוטומטי
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowHaftarotModal(false)}
-                className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-5 overflow-y-auto space-y-4 flex-1">
-              {/* Add / Update Haftarah Form */}
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!newHaftarahEntryName.trim()) return;
-                  onSetHaftarahLength(
-                    newHaftarahEntryName.trim(),
-                    Math.max(0, Number(newHaftarahEntryVerses) || 0)
-                  );
-                  setNewHaftarahEntryName('');
-                }}
-                className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 flex flex-wrap items-end gap-2"
-              >
-                <div className="flex-1 min-w-[160px]">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    שם ההפטרה / הפרשה
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    list="all-parashot-haftarot"
-                    value={newHaftarahEntryName}
-                    onChange={(e) => setNewHaftarahEntryName(e.target.value)}
-                    placeholder="למשל: נח / שמות א / מחר חודש"
-                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-semibold"
-                  />
-                  <datalist id="all-parashot-haftarot">
-                    {sortHaftarahNames([...PARASHA_META_LIST.map((pm) => pm.name), ...SPECIAL_HAFTAROT]).map((name) => (
-                      <option key={name} value={name} />
-                    ))}
-                  </datalist>
-                </div>
-
-                <div className="w-28">
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    מספר פסוקים
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    required
-                    value={newHaftarahEntryVerses}
-                    onChange={(e) =>
-                      setNewHaftarahEntryVerses(Math.max(0, Number(e.target.value) || 0))
-                    }
-                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold text-center"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1 h-[34px]"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>שמור</span>
-                </button>
-              </form>
-
-              {/* Existing Haftarot List */}
-              <div className="divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden">
-                {haftarahNames.map((name) => (
-                  <div
-                    key={name}
-                    className="px-4 py-2.5 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 text-xs"
-                  >
-                    <span className="font-bold text-slate-900">{name}</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        value={haftarotMap[name]}
-                        onChange={(e) =>
-                          onSetHaftarahLength(
-                            name,
-                            Math.max(0, Number(e.target.value) || 0)
-                          )
-                        }
-                        className="w-16 text-center font-bold border border-slate-200 rounded-lg py-1"
-                      />
-                      <span className="text-slate-500">פסוקים</span>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteHaftarahLength(name)}
-                        className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                        title="מחק מהטבלה"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowHaftarotModal(false)}
-                className="px-5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
-              >
-                סגור
-              </button>
-            </div>
-          </div>
         </div>
       )}
 

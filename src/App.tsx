@@ -293,13 +293,6 @@ function AppContent() {
     syncToR2(nextStudents, nextHaftarot);
   };
 
-  const handleDeleteHaftarahLength = (name: string) => {
-    const nextHaftarot = { ...haftarotRef.current };
-    delete nextHaftarot[name];
-    setHaftarotMap(nextHaftarot);
-    syncToR2(studentsRef.current, nextHaftarot);
-  };
-
   const handleSetDefaultHaftarahTradition = (tradition: HaftarahTradition) => {
     const next: TeacherSettings = { ...settingsRef.current, defaultHaftarahTradition: tradition };
     settingsRef.current = next;
@@ -533,7 +526,6 @@ function AppContent() {
         onForceSync={() => syncToR2(students, haftarotMap)}
         onLogout={handleLogout}
         onSetHaftarahLength={handleSetHaftarahLength}
-        onDeleteHaftarahLength={handleDeleteHaftarahLength}
         onUpdateStudent={handleUpdateStudent}
         onAddStudent={handleAddStudent}
         onDeleteStudent={handleDeleteStudent}
