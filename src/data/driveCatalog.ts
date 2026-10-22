@@ -9,6 +9,8 @@ export interface RecordingItem {
   localUrl?: string; // Bundled static file path in /docs/...
   visible?: boolean; // For student-specific portions: whether the student can see it
   customAudioDataUrl?: string;
+  r2Key?: string; // Cloudflare R2 object key (e.g. media/{teacherId}/{studentId}/...)
+  r2Url?: string; // Direct R2 stream URL
 }
 
 export interface ParashaMeta {
@@ -146,6 +148,7 @@ export const GENERAL_AUDIO_ITEMS: RecordingItem[] = [
     category: 'blessings',
     ext: 'aac',
     resourceKey: '0-5f1ErdBd65p6uQq5HvzzEg',
+    r2Key: 'media/mosheg/library/drive-0B6cVWsWs-t94X0JBNXV1TmxTaDQ.aac',
     viewUrl:
       'https://drive.google.com/file/d/0B6cVWsWs-t94X0JBNXV1TmxTaDQ/view?usp=drivesdk&resourcekey=0-5f1ErdBd65p6uQq5HvzzEg',
   },
@@ -156,6 +159,7 @@ export const GENERAL_AUDIO_ITEMS: RecordingItem[] = [
     category: 'blessings',
     ext: 'aac',
     resourceKey: '0-Hovzjl6uhFezqzfth_05BA',
+    r2Key: 'media/mosheg/library/drive-0B6cVWsWs-t94UVVGYXN2RkJPQVk.aac',
     viewUrl:
       'https://drive.google.com/file/d/0B6cVWsWs-t94UVVGYXN2RkJPQVk/view?usp=drivesdk&resourcekey=0-Hovzjl6uhFezqzfth_05BA',
   },
@@ -166,6 +170,7 @@ export const GENERAL_AUDIO_ITEMS: RecordingItem[] = [
     category: 'blessings',
     ext: 'aac',
     resourceKey: '0-0ycSFGx3oKMW-UlMwq9jew',
+    r2Key: 'media/mosheg/library/drive-0B6cVWsWs-t94TkJCSGN4cmhuWVk.aac',
     viewUrl:
       'https://drive.google.com/file/d/0B6cVWsWs-t94TkJCSGN4cmhuWVk/view?usp=drivesdk&resourcekey=0-0ycSFGx3oKMW-UlMwq9jew',
   },
@@ -176,6 +181,7 @@ export const GENERAL_AUDIO_ITEMS: RecordingItem[] = [
     category: 'blessings',
     ext: 'aac',
     resourceKey: '0-tHwbf1uiFz9d8VfWokCJpQ',
+    r2Key: 'media/mosheg/library/drive-0B6cVWsWs-t94WXFvbEdZM2hiVkk.aac',
     viewUrl:
       'https://drive.google.com/file/d/0B6cVWsWs-t94WXFvbEdZM2hiVkk/view?usp=drivesdk&resourcekey=0-tHwbf1uiFz9d8VfWokCJpQ',
   },
@@ -186,6 +192,7 @@ export const GENERAL_AUDIO_ITEMS: RecordingItem[] = [
     category: 'blessings',
     ext: 'aac',
     resourceKey: '0-66cOSIS76Y_MzJuTWqdUcA',
+    r2Key: 'media/mosheg/library/drive-0B6cVWsWs-t94RDlPLV9uYkU5UVk.aac',
     viewUrl:
       'https://drive.google.com/file/d/0B6cVWsWs-t94RDlPLV9uYkU5UVk/view?usp=drivesdk&resourcekey=0-66cOSIS76Y_MzJuTWqdUcA',
   },

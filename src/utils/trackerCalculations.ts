@@ -142,6 +142,12 @@ export function getMediaStreamUrl(rec: RecordingItem): string {
   if (rec.localUrl) {
     return rec.localUrl;
   }
+  if (rec.r2Url) {
+    return rec.r2Url;
+  }
+  if (rec.r2Key) {
+    return `/api/r2-media?key=${encodeURIComponent(rec.r2Key)}`;
+  }
   if (rec.customAudioDataUrl) {
     return rec.customAudioDataUrl;
   }

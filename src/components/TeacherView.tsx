@@ -27,6 +27,8 @@ import {
   CloudUpload,
   CheckCircle2,
   RefreshCw,
+  LogOut,
+  HardDrive,
 } from 'lucide-react';
 import {
   StudentProfile,
@@ -45,22 +47,33 @@ import {
   classifyFileTitle,
 } from '../utils/trackerCalculations';
 import {
-  uploadAudioToDrive,
-  GOOGLE_APPS_SCRIPT_CODE,
+  uploadLocalFileToR2,
+  transferDriveFilesToR2,
 } from '../utils/cloudSync';
+import {
+  pickFilesFromGoogleDrive,
+  getGoogleClientId,
+  setGoogleClientId,
+  getGoogleApiKey,
+  setGoogleApiKey,
+} from '../utils/googleDrivePicker';
 import type { DriveSyncStatus } from '../App';
 import { AudioPlayerBar } from './AudioPlayerBar';
 import { barMitzvaFromGregorian, barMitzvaFromHebrew, type BarMitzvaInfo } from '../utils/barMitzvaParsha';
 
 interface TeacherViewProps {
+  teacherId: string;
+  teacherDisplayName?: string;
+  teacherToken: string;
+  r2Configured?: boolean;
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
-  gasUrl: string;
+  parashaLibrary?: Record<string, RecordingItem[]>;
   syncStatus: DriveSyncStatus;
   syncErrorMessage: string | null;
   lastSyncedAt: string | null;
-  onSaveGasUrl: (url: string) => Promise<boolean>;
   onForceSync: () => Promise<boolean>;
+  onLogout: () => void;
   onSetHaftarahLength: (name: string, verses: number) => void;
   onDeleteHaftarahLength: (name: string) => void;
   onUpdateStudent: (updated: StudentProfile) => void;
@@ -97,14 +110,18 @@ function addDays(dt: Date, days: number): Date {
 }
 
 export const TeacherView: React.FC<TeacherViewProps> = ({
+  teacherId,
+  teacherDisplayName,
+  teacherToken,
+  r2Configured,
   students,
   haftarotMap,
-  gasUrl,
+  parashaLibrary = {},
   syncStatus,
   syncErrorMessage,
   lastSyncedAt,
-  onSaveGasUrl,
   onForceSync,
+  onLogout,
   onSetHaftarahLength,
   onDeleteHaftarahLength,
   onUpdateStudent,
@@ -121,11 +138,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewRecording, setPreviewRecording] = useState<RecordingItem | null>(null);
 
-  // Google Apps Script Setup Modal State
-  const [gasUrlInput, setGasUrlInput] = useState(gasUrl);
-  const [copiedGasScript, setCopiedGasScript] = useState(false);
-  const [isTestingGas, setIsTestingGas] = useState(false);
-  const [gasTestMessage, setGasTestMessage] = useState<string | null>(null);
+  // R2 & Google Picker Setup Modal State
+  const [isTestingSync, setIsTestingSync] = useState(false);
+  const [syncTestMessage, setSyncTestMessage] = useState<string | null>(null);
+  const [googleClientIdInput, setGoogleClientIdInput] = useState(() => getGoogleClientId());
+  const [googleApiKeyInput, setGoogleApiKeyInput] = useState(() => getGoogleApiKey());
+  const [showGoogleConfigPrompt, setShowGoogleConfigPrompt] = useState(false);
+  const [isPickingFromDrive, setIsPickingFromDrive] = useState(false);
 
   // Haftarah Table Modal Form State
   const [newHaftarahEntryName, setNewHaftarahEntryName] = useState('');
@@ -231,7 +250,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
   const buildStudentShareUrl = (student: StudentProfile) => {
     const baseUrl = window.location.origin + window.location.pathname;
-    return `${baseUrl}?student=${encodeURIComponent(student.id)}`;
+    const params = new URLSearchParams({
+      teacher: teacherId,
+      student: student.id,
+    });
+    return `${baseUrl}?${params.toString()}`;
   };
 
   const handleCopyStudentLink = (student: StudentProfile) => {
@@ -253,36 +276,23 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     }
   };
 
-  const fetchFilesFromDriveFolder = async (folderUrl: string): Promise<RecordingItem[]> => {
+  const fetchFilesFromDriveFolder = async (
+    folderUrl: string,
+    targetStudentId: string
+  ): Promise<RecordingItem[]> => {
     const parsed = parseDriveUrl(folderUrl);
     if (!parsed || !parsed.isFolder) {
       throw new Error('נא להדביק קישור תקין לתיקיית Google Drive');
     }
-    const params = new URLSearchParams({ folderId: parsed.id });
-    if (parsed.resourceKey) params.set('resourceKey', parsed.resourceKey);
 
-    const res = await fetch(`/api/drive-sync?${params.toString()}`);
-    if (!res.ok) throw new Error('לא ניתן לקרוא את התיקייה מ-Drive (ודא שהיא משותפת לצפייה)');
-    const data = await res.json();
-    if (!Array.isArray(data.items)) return [];
-
-    return data.items
-      .filter((item: any) => item.mimeType !== 'application/vnd.google-apps.folder')
-      .map((item: any) => {
-        const { aliyah, category, ext } = classifyFileTitle(String(item.name));
-        return {
-          id: item.id,
-          title: String(item.name).trim(),
-          aliyah,
-          category,
-          ext,
-          resourceKey: item.resourceKey || null,
-          visible: true,
-          viewUrl: `https://drive.google.com/file/d/${item.id}/view?usp=drivesdk${
-            item.resourceKey ? `&resourcekey=${item.resourceKey}` : ''
-          }`,
-        };
-      });
+    // Transfer all files from the teacher's Google Drive folder directly into Cloudflare R2
+    return await transferDriveFilesToR2({
+      teacherId,
+      token: teacherToken,
+      studentId: targetStudentId,
+      folderId: parsed.id,
+      resourceKey: parsed.resourceKey,
+    });
   };
 
   const handleLoadFolderIntoStudent = async () => {
@@ -290,7 +300,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     setIsLoadingFolder(true);
     setFolderLoadMsg(null);
     try {
-      const items = await fetchFilesFromDriveFolder(folderUrlInput);
+      const items = await fetchFilesFromDriveFolder(folderUrlInput, managingStudent.id);
       if (items.length === 0) {
         setFolderLoadMsg('לא נמצאו קבצים בתיקייה זו.');
       } else {
@@ -304,12 +314,84 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           driveFolderUrl: folderUrlInput.trim(),
           portions: merged,
         });
-        setFolderLoadMsg(`נטענו ${items.length} קבצים מהתיקייה! סמן למטה אילו מהם יהיו גלויים לתלמיד.`);
+        setFolderLoadMsg(
+          `הועברו ${items.length} קבצים מ-Google Drive אל ענן R2 בהצלחה! סמן למטה אילו מהם יהיו גלויים לתלמיד.`
+        );
       }
     } catch (err: any) {
-      setFolderLoadMsg(err?.message || 'שגיאה בטעינת התיקייה');
+      setFolderLoadMsg(err?.message || 'שגיאה בהעברת התיקייה ל-R2');
     } finally {
       setIsLoadingFolder(false);
+    }
+  };
+
+  const handlePickFromGoogleDrive = async () => {
+    if (!managingStudent) return;
+    if (!getGoogleClientId()) {
+      setShowGoogleConfigPrompt(true);
+      return;
+    }
+
+    setIsPickingFromDrive(true);
+    setFolderLoadMsg(null);
+    try {
+      const picked = await pickFilesFromGoogleDrive();
+      if (!picked || picked.files.length === 0) {
+        return;
+      }
+
+      const folders = picked.files.filter((f) => f.isFolder);
+      const regularFiles = picked.files.filter((f) => !f.isFolder);
+      const allTransferred: RecordingItem[] = [];
+
+      for (const folder of folders) {
+        const folderItems = await transferDriveFilesToR2({
+          teacherId,
+          token: teacherToken,
+          studentId: managingStudent.id,
+          folderId: folder.id,
+          oauthToken: picked.oauthToken,
+        });
+        allTransferred.push(...folderItems);
+      }
+
+      if (regularFiles.length > 0) {
+        const fileItems = await transferDriveFilesToR2({
+          teacherId,
+          token: teacherToken,
+          studentId: managingStudent.id,
+          files: regularFiles.map((f) => ({
+            id: f.id,
+            name: f.name,
+            mimeType: f.mimeType,
+          })),
+          oauthToken: picked.oauthToken,
+        });
+        allTransferred.push(...fileItems);
+      }
+
+      if (allTransferred.length > 0) {
+        const existingIds = new Set((managingStudent.portions || []).map((p) => p.id));
+        const merged = [
+          ...(managingStudent.portions || []),
+          ...allTransferred.filter((i) => !existingIds.has(i.id)),
+        ];
+        onUpdateStudent({
+          ...managingStudent,
+          portions: merged,
+        });
+        setFolderLoadMsg(
+          `הועברו ${allTransferred.length} קבצים מ-Google Drive אל ענן R2 בהצלחה!`
+        );
+      }
+    } catch (err: any) {
+      if (err?.message === 'MISSING_GOOGLE_CLIENT_ID') {
+        setShowGoogleConfigPrompt(true);
+      } else {
+        setFolderLoadMsg(err?.message || 'שגיאה בבחירה או בהעברה מ-Google Drive');
+      }
+    } finally {
+      setIsPickingFromDrive(false);
     }
   };
 
@@ -323,74 +405,83 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     const title =
       localFileName || `${managingStudent.parasha} - ${singleAliyahLabel}.${singleExt}`;
 
-    // If teacher selected a local file AND Google Apps Script is connected, upload straight to Google Drive!
-    if (!parsed && localDataUrl && gasUrl) {
-      setIsUploadingAudio(true);
-      try {
-        const targetFolderParsed = managingStudent.driveFolderUrl
-          ? parseDriveUrl(managingStudent.driveFolderUrl)
-          : null;
-        const base64Data = localDataUrl.includes(',')
-          ? localDataUrl.split(',')[1]
-          : localDataUrl;
-        const uploaded = await uploadAudioToDrive(gasUrl, {
+    setIsUploadingAudio(true);
+    setFolderLoadMsg(null);
+    try {
+      // Case 1: Upload local file from device straight to Cloudflare R2
+      if (!parsed && localDataUrl) {
+        const uploaded = await uploadLocalFileToR2({
+          teacherId,
+          token: teacherToken,
+          studentId: managingStudent.id,
           fileName: title,
           mimeType: localMimeType,
-          base64Data,
-          folderId: targetFolderParsed?.isFolder ? targetFolderParsed.id : undefined,
+          ext: singleExt,
+          base64Data: localDataUrl,
         });
-        if (uploaded.id) {
-          const drivePortion: RecordingItem = {
-            id: uploaded.id,
-            title: uploaded.name || title,
-            aliyah: singleAliyahLabel.trim() || 'עלייה',
-            category: singleCategory,
-            ext: singleExt,
-            resourceKey: null,
-            visible: true,
-            viewUrl:
-              uploaded.viewUrl ||
-              `https://drive.google.com/file/d/${uploaded.id}/view?usp=drivesdk`,
-          };
+
+        const r2Portion: RecordingItem = {
+          id: uploaded.id,
+          title: uploaded.name || title,
+          aliyah: singleAliyahLabel.trim() || 'עלייה',
+          category: singleCategory,
+          ext: (uploaded.ext || singleExt) as RecordingItem['ext'],
+          r2Key: uploaded.r2Key,
+          r2Url: uploaded.r2Url,
+          viewUrl: uploaded.viewUrl,
+          visible: true,
+        };
+
+        onUpdateStudent({
+          ...managingStudent,
+          portions: [...(managingStudent.portions || []), r2Portion],
+        });
+        setSingleLinkInput('');
+        setLocalDataUrl(undefined);
+        setLocalFileName('');
+        return;
+      }
+
+      // Case 2: Transfer single file (or folder) from Google Drive link directly into Cloudflare R2
+      if (parsed) {
+        const transferred = await transferDriveFilesToR2({
+          teacherId,
+          token: teacherToken,
+          studentId: managingStudent.id,
+          folderId: parsed.isFolder ? parsed.id : undefined,
+          fileId: !parsed.isFolder ? parsed.id : undefined,
+          resourceKey: parsed.resourceKey,
+          fileName: title,
+          ext: singleExt,
+        });
+
+        if (transferred.length > 0) {
+          const customized = transferred.map((item, idx) =>
+            idx === 0 && !parsed.isFolder
+              ? {
+                  ...item,
+                  title,
+                  aliyah: singleAliyahLabel.trim() || item.aliyah,
+                  category: singleCategory,
+                }
+              : item
+          );
           onUpdateStudent({
             ...managingStudent,
-            portions: [...(managingStudent.portions || []), drivePortion],
+            portions: [...(managingStudent.portions || []), ...customized],
           });
           setSingleLinkInput('');
           setLocalDataUrl(undefined);
           setLocalFileName('');
+          setFolderLoadMsg('הקובץ הועבר מ-Google Drive אל ענן R2 בהצלחה!');
           return;
         }
-      } finally {
-        setIsUploadingAudio(false);
       }
+    } catch (err: any) {
+      setFolderLoadMsg(err?.message || 'שגיאה בהעלאת הקובץ לענן R2');
+    } finally {
+      setIsUploadingAudio(false);
     }
-
-    const id = parsed ? parsed.id : `local-${Date.now()}`;
-    const rk = parsed ? parsed.resourceKey : null;
-
-    const newPortion: RecordingItem = {
-      id,
-      title,
-      aliyah: singleAliyahLabel.trim() || 'עלייה',
-      category: singleCategory,
-      ext: singleExt,
-      resourceKey: rk,
-      visible: true,
-      viewUrl: parsed
-        ? `https://drive.google.com/file/d/${id}/view?usp=drivesdk${rk ? `&resourcekey=${rk}` : ''}`
-        : '#',
-      customAudioDataUrl: localDataUrl,
-    };
-
-    onUpdateStudent({
-      ...managingStudent,
-      portions: [...(managingStudent.portions || []), newPortion],
-    });
-
-    setSingleLinkInput('');
-    setLocalDataUrl(undefined);
-    setLocalFileName('');
   };
 
   const handleLocalFilePick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -445,9 +536,18 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     let initialPortions: RecordingItem[] = [];
     if (newFolderUrl.trim()) {
       try {
-        initialPortions = await fetchFilesFromDriveFolder(newFolderUrl);
+        initialPortions = await fetchFilesFromDriveFolder(newFolderUrl, slug);
       } catch {
         // Can also load later in manage modal
+      }
+    } else {
+      const cleanP = newParasha.trim();
+      const libMatch =
+        parashaLibrary[cleanP] ||
+        (cleanP === 'בחוקותי' ? parashaLibrary['בחוקתי'] : undefined) ||
+        (cleanP === 'חקת' ? parashaLibrary['חוקת'] : undefined);
+      if (libMatch && libMatch.length > 0) {
+        initialPortions = libMatch.map((item) => ({ ...item, visible: true }));
       }
     }
 
@@ -538,22 +638,26 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               <Users className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="text-lg sm:text-xl font-extrabold">
-                ניהול תלמידים – קריאה בתורה
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg sm:text-xl font-extrabold">
+                  ניהול תלמידים – קריאה בתורה
+                </h1>
+                <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 text-xs font-bold">
+                  מורה: {teacherDisplayName || teacherId} ({teacherId})
+                </span>
+              </div>
               <p className="text-xs text-slate-400">
-                מעקב פסוקים, תאריכי התחלה, תרשים גאנט שבועי וניהול הקלטות לכל תלמיד
+                מעקב פסוקים, תאריכי התחלה, תרשים גאנט שבועי וניהול הקלטות בענן R2 לכל תלמיד
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Google Drive Cloud Save Button / Status */}
+            {/* Cloudflare R2 Cloud Save Status / Settings */}
             <button
               type="button"
               onClick={() => {
-                setGasUrlInput(gasUrl);
-                setGasTestMessage(null);
+                setSyncTestMessage(null);
                 setShowDriveSyncModal(true);
               }}
               className={`px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-1.5 transition ${
@@ -563,29 +667,29 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   ? 'bg-indigo-950 border-indigo-700 text-indigo-300'
                   : syncStatus === 'error'
                   ? 'bg-rose-950 border-rose-700 text-rose-300 hover:bg-rose-900'
-                  : 'bg-amber-500/20 border-amber-400/40 text-amber-200 hover:bg-amber-500/30'
+                  : 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
               }`}
-              title="הגדרת שמירה אוטומטית ב-Google Drive (באמצעות Google Apps Script)"
+              title="סטטוס שמירה בענן Cloudflare R2 והגדרות Google Picker"
             >
               {syncStatus === 'saving' ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                  <span>שומר ב-Drive...</span>
+                  <span>שומר ב-R2...</span>
                 </>
               ) : syncStatus === 'saved' ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>נשמר ב-Drive</span>
+                  <span>נשמר בענן R2</span>
                 </>
               ) : syncStatus === 'error' ? (
                 <>
                   <AlertTriangle className="w-4 h-4 text-rose-400" />
-                  <span>שגיאת סנכרון Drive</span>
+                  <span>שגיאת סנכרון R2</span>
                 </>
               ) : (
                 <>
-                  <Cloud className="w-4 h-4 text-amber-300" />
-                  <span>חבר שמירה ל-Drive</span>
+                  <Cloud className="w-4 h-4 text-indigo-300" />
+                  <span>ענן R2</span>
                 </>
               )}
             </button>
@@ -606,6 +710,16 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             >
               <UserPlus className="w-4 h-4" />
               <span>תלמיד חדש</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onLogout}
+              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/80 text-slate-300 hover:text-rose-200 border border-slate-700 hover:border-rose-700 text-xs font-bold flex items-center gap-1.5 transition"
+              title="התנתק מחשבון מורה"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden sm:inline">יציאה</span>
             </button>
           </div>
         </div>
@@ -1455,10 +1569,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
               <div>
                 <h3 className="font-extrabold text-lg">
-                  ניהול הקלטות – {managingStudent.name} (פרשת {managingStudent.parasha})
+                  ניהול הקלטות בענן R2 – {managingStudent.name} (פרשת {managingStudent.parasha})
                 </h3>
                 <p className="text-xs text-slate-300">
-                  קשר תיקיית Drive או קבצים בודדים ובחר אילו עליות יהיו גלויות לתלמיד
+                  העבר הקלטות מ-Google Drive שלך או העלה מהמכשיר ישירות לענן R2
                 </p>
               </div>
               <button
@@ -1471,18 +1585,120 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             </div>
 
             <div className="p-5 overflow-y-auto space-y-5 flex-1">
-              {/* Option A: Link a Google Drive Folder */}
-              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                <label className="block text-xs font-bold text-slate-800 mb-1.5 flex items-center gap-1.5">
-                  <FolderPlus className="w-4 h-4 text-indigo-600" />
-                  <span>קישור תיקיית פרשה מ-Google Drive (מייבא את כל הקבצים בתיקייה):</span>
-                </label>
+              {/* Option A: Direct Google Drive Picker OR Folder Link -> Transfer to R2 */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <FolderPlus className="w-4 h-4 text-indigo-600" />
+                    <span>העברת הקלטות מ-Google Drive או ממאגר ה-R2 שלך:</span>
+                  </label>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {(() => {
+                      const cleanP = managingStudent.parasha.trim();
+                      const libItems =
+                        parashaLibrary[cleanP] ||
+                        (cleanP === 'בחוקותי' ? parashaLibrary['בחוקתי'] : undefined) ||
+                        (cleanP === 'חקת' ? parashaLibrary['חוקת'] : undefined);
+                      if (!libItems || libItems.length === 0) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const existingIds = new Set(
+                              (managingStudent.portions || []).map((p) => p.id)
+                            );
+                            const merged = [
+                              ...(managingStudent.portions || []),
+                              ...libItems.filter((i) => !existingIds.has(i.id)),
+                            ];
+                            onUpdateStudent({
+                              ...managingStudent,
+                              portions: merged,
+                            });
+                            setFolderLoadMsg(
+                              `נטענו ${libItems.length} הקלטות של פרשת ${managingStudent.parasha} ישירות ממאגר ה-R2 שלך!`
+                            );
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition"
+                        >
+                          <Cloud className="w-3.5 h-3.5" />
+                          <span>
+                            טען ממאגר ה-R2 (פרשת {managingStudent.parasha} – {libItems.length})
+                          </span>
+                        </button>
+                      );
+                    })()}
+
+                    <button
+                      type="button"
+                      onClick={handlePickFromGoogleDrive}
+                      disabled={isPickingFromDrive}
+                      className="px-3.5 py-1.5 rounded-xl bg-white hover:bg-indigo-50 border border-indigo-300 text-indigo-700 text-xs font-bold flex items-center gap-1.5 shadow-2xs transition"
+                    >
+                      {isPickingFromDrive ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                      ) : (
+                        <HardDrive className="w-3.5 h-3.5 text-indigo-600" />
+                      )}
+                      <span>בחר ישירות מ-Google Drive (Picker)</span>
+                    </button>
+                  </div>
+                </div>
+
+                {showGoogleConfigPrompt && (
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 space-y-2 text-xs">
+                    <div className="font-bold text-indigo-950">
+                      הגדרת Google Client ID לבחירה ישירה מ-Drive (או הגדר <code className="text-indigo-700">VITE_GOOGLE_CLIENT_ID</code>):
+                    </div>
+                    <input
+                      type="text"
+                      value={googleClientIdInput}
+                      onChange={(e) => setGoogleClientIdInput(e.target.value)}
+                      placeholder="xxxx.apps.googleusercontent.com"
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                    <input
+                      type="text"
+                      value={googleApiKeyInput}
+                      onChange={(e) => setGoogleApiKeyInput(e.target.value)}
+                      placeholder="Google API Key (אופציונלי עבור Picker)"
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                      dir="ltr"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowGoogleConfigPrompt(false)}
+                        className="px-3 py-1 rounded-lg text-slate-600 hover:bg-slate-200 font-semibold"
+                      >
+                        ביטול
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGoogleClientId(googleClientIdInput);
+                          setGoogleApiKey(googleApiKeyInput);
+                          setShowGoogleConfigPrompt(false);
+                          if (googleClientIdInput.trim()) {
+                            handlePickFromGoogleDrive();
+                          }
+                        }}
+                        className="px-3 py-1 rounded-lg bg-indigo-600 text-white font-bold"
+                      >
+                        שמור והמשך
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={folderUrlInput}
                     onChange={(e) => setFolderUrlInput(e.target.value)}
-                    placeholder="https://drive.google.com/drive/folders/..."
+                    placeholder="או הדבק קישור לתיקיית פרשה ב-Google Drive..."
                     className="flex-1 bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs"
                     dir="ltr"
                   />
@@ -1495,9 +1711,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     {isLoadingFolder ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <FolderPlus className="w-3.5 h-3.5" />
+                      <CloudUpload className="w-3.5 h-3.5" />
                     )}
-                    <span>טען קבצים מהתיקייה</span>
+                    <span>ייבא תיקייה ל-R2</span>
                   </button>
                 </div>
                 {folderLoadMsg && (
@@ -1507,7 +1723,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 )}
               </div>
 
-              {/* Option B: Add a Specific Drive File Link or Upload Audio File */}
+              {/* Option B: Add a Specific Drive File Link or Upload Audio File to R2 */}
               <form
                 onSubmit={handleAddSinglePortion}
                 className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5"
@@ -1515,7 +1731,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <LinkIcon className="w-4 h-4 text-emerald-600" />
                   <span>
-                    או הוסף קובץ הקלטה בודד (קישור ל-Drive או העלאת קובץ ישירות ל-Drive שלך):
+                    או הוסף הקלטה בודדת לענן R2 (קישור לקובץ ב-Drive או העלאת קובץ מהמכשיר):
                   </span>
                 </div>
 
@@ -1571,7 +1787,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     type="text"
                     value={singleLinkInput}
                     onChange={(e) => setSingleLinkInput(e.target.value)}
-                    placeholder="הדבק קישור לקובץ ב-Google Drive..."
+                    placeholder="הדבק קישור לקובץ ב-Google Drive להעברה ל-R2..."
                     className="flex-1 min-w-[200px] bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs"
                     dir="ltr"
                   />
@@ -1592,12 +1808,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     {isUploadingAudio ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>מעלה ל-Drive...</span>
+                        <span>מעלה ל-R2...</span>
                       </>
                     ) : (
                       <>
                         <Plus className="w-3.5 h-3.5" />
-                        <span>הוסף</span>
+                        <span>העלה ל-R2</span>
                       </>
                     )}
                   </button>
@@ -2168,7 +2384,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
         </div>
       )}
 
-      {/* MODAL 4: GOOGLE DRIVE CLOUD SYNC SETUP (GOOGLE APPS SCRIPT WEB APP) */}
+      {/* MODAL 4: CLOUDFLARE R2 SYNC STATUS & GOOGLE PICKER SETTINGS */}
       {showDriveSyncModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
           <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
@@ -2177,10 +2393,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 <CloudUpload className="w-5 h-5 text-indigo-400" />
                 <div>
                   <h3 className="font-extrabold text-lg">
-                    שמירה אוטומטית ב-Google Drive (Apps Script)
+                    אחסון וסנכרון בענן Cloudflare R2
                   </h3>
                   <p className="text-xs text-slate-300">
-                    שומר את כל נתוני התלמידים, ההתקדמות וההפטרות בקובץ <code className="text-indigo-300">torah-app-data.json</code> בתיקיית ה-Drive שלך
+                    כל נתוני התלמידים וההקלטות של המורה <code className="text-indigo-300">{teacherId}</code> נשמרים ב-Cloudflare R2
                   </p>
                 </div>
               </div>
@@ -2194,106 +2410,94 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             </div>
 
             <div className="p-5 overflow-y-auto space-y-4 flex-1 text-xs text-slate-700">
-              {/* Step-by-step instructions */}
               <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 space-y-2">
                 <div className="font-extrabold text-indigo-950 text-sm mb-1">
-                  איך לחבר את האפליקציה ל-Google Drive ב-2 דקות (חד-פעמי):
+                  פרטי אחסון המורה בענן R2:
                 </div>
-                <ol className="list-decimal list-inside space-y-1.5 text-slate-700 leading-relaxed">
-                  <li>
-                    לחץ על הכפתור למטה <strong>"העתק קוד Google Apps Script"</strong>.
-                  </li>
-                  <li>
-                    פתח את{' '}
-                    <a
-                      href="https://script.google.com/home/start"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-indigo-600 font-bold underline"
-                    >
-                      script.google.com
-                    </a>{' '}
-                    ולחץ על <strong>New project (פרויקט חדש)</strong>.
-                  </li>
-                  <li>
-                    מחק את הקוד הקיים, הדבק את הקוד שהעתקת ולחץ על סמל השמירה (💾).
-                  </li>
-                  <li>
-                    לחץ למעלה על <strong>Deploy &rarr; New deployment</strong>, בחר סוג{' '}
-                    <strong>Web app</strong>, הגדר:
-                    <ul className="list-disc list-inside mr-4 mt-1 text-slate-600">
-                      <li>
-                        <strong>Execute as:</strong> Me (אני)
-                      </li>
-                      <li>
-                        <strong>Who has access:</strong> Anyone (כל אחד)
-                      </li>
-                    </ul>
-                  </li>
-                  <li>
-                    אשר הרשאות (Authorize) והעתק את כתובת ה-<strong>Web app URL</strong> (מסתיים ב-<code>/exec</code>) אל השדה למטה:
-                  </li>
-                </ol>
-
-                <div className="pt-2 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
-                      setCopiedGasScript(true);
-                      setTimeout(() => setCopiedGasScript(false), 3000);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 shadow-2xs transition"
-                  >
-                    {copiedGasScript ? (
-                      <>
-                        <Check className="w-4 h-4" />
-                        <span>הקוד הועתק ללוח!</span>
-                      </>
+                <div className="space-y-1 text-slate-700">
+                  <div>
+                    <strong>מזהה מורה (Teacher ID):</strong>{' '}
+                    <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono">
+                      {teacherId}
+                    </code>
+                  </div>
+                  <div>
+                    <strong>קובץ נתונים ב-R2:</strong>{' '}
+                    <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono">
+                      teachers/{teacherId}/data.json
+                    </code>
+                  </div>
+                  <div>
+                    <strong>תיקיית הקלטות ב-R2:</strong>{' '}
+                    <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono">
+                      media/{teacherId}/&lt;studentId&gt;/...
+                    </code>
+                  </div>
+                  <div>
+                    <strong>תבנית קישור לתלמיד:</strong>{' '}
+                    <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono" dir="ltr">
+                      ?teacher={teacherId}&amp;student=&lt;studentId&gt;
+                    </code>
+                  </div>
+                  <div>
+                    <strong>מצב חיבור שרת R2:</strong>{' '}
+                    {r2Configured ? (
+                      <span className="text-emerald-700 font-bold">
+                        מחובר ל-Cloudflare R2 פעיל
+                      </span>
                     ) : (
-                      <>
-                        <Copy className="w-4 h-4" />
-                        <span>העתק קוד Google Apps Script</span>
-                      </>
+                      <span className="text-amber-700 font-bold">
+                        מצב פיתוח מקומי (.r2-local) – הגדר משתני סביבה R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME ב-Vercel/סביבה לחיבור ענן R2
+                      </span>
                     )}
-                  </button>
-
-                  <a
-                    href="https://script.google.com/home/start"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-3.5 py-2 rounded-xl bg-white border border-indigo-200 text-indigo-700 font-bold flex items-center gap-1 hover:bg-indigo-50"
-                  >
-                    <span>פתח את Google Apps Script</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                  </div>
                 </div>
               </div>
 
-              {/* Web App URL Input */}
-              <div className="space-y-2">
-                <label className="block font-bold text-slate-800 text-xs">
-                  כתובת ה-Web App URL מ-Google Apps Script:
-                </label>
-                <input
-                  type="url"
-                  value={gasUrlInput}
-                  onChange={(e) => setGasUrlInput(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
-                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono"
-                  dir="ltr"
-                />
+              {/* Optional Google OAuth Client ID for Google Drive Picker & Google Sign-In */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5">
+                <div className="font-bold text-slate-800 text-xs">
+                  הגדרות Google Drive Picker (אופציונלי – לבחירת קבצים ישירות מחלונית Google Drive):
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Google OAuth Client ID (או משתנה סביבה <code>VITE_GOOGLE_CLIENT_ID</code>):
+                    </label>
+                    <input
+                      type="text"
+                      value={googleClientIdInput}
+                      onChange={(e) => setGoogleClientIdInput(e.target.value)}
+                      placeholder="xxxx-xxxx.apps.googleusercontent.com"
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Google Picker API Key (אופציונלי – או <code>VITE_GOOGLE_API_KEY</code>):
+                    </label>
+                    <input
+                      type="text"
+                      value={googleApiKeyInput}
+                      onChange={(e) => setGoogleApiKeyInput(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono"
+                      dir="ltr"
+                    />
+                  </div>
+                </div>
               </div>
 
-              {gasTestMessage && (
+              {syncTestMessage && (
                 <div
                   className={`p-3 rounded-xl font-bold ${
-                    gasTestMessage.includes('בהצלחה')
+                    syncTestMessage.includes('בהצלחה')
                       ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                       : 'bg-rose-50 text-rose-800 border border-rose-200'
                   }`}
                 >
-                  {gasTestMessage}
+                  {syncTestMessage}
                 </div>
               )}
 
@@ -2305,34 +2509,32 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
               {lastSyncedAt && (
                 <div className="text-[11px] text-slate-500">
-                  סנכרון אחרון ל-Drive:{' '}
+                  סנכרון אחרון ל-R2:{' '}
                   <strong>{new Date(lastSyncedAt).toLocaleString('he-IL')}</strong>
                 </div>
               )}
             </div>
 
             <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
-              {gasUrl && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setIsTestingGas(true);
-                    setGasTestMessage(null);
-                    const ok = await onForceSync();
-                    setIsTestingGas(false);
-                    setGasTestMessage(
-                      ok
-                        ? 'הנתונים נשמרו ב-Google Drive בהצלחה! (קובץ torah-app-data.json עודכן)'
-                        : 'שגיאה בשמירה ל-Drive – בדוק שהכתובת מסתיימת ב-/exec ושהגישה מוגדרת ל-Anyone'
-                    );
-                  }}
-                  disabled={isTestingGas}
-                  className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isTestingGas ? 'animate-spin' : ''}`} />
-                  <span>סנכרן עכשיו</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsTestingSync(true);
+                  setSyncTestMessage(null);
+                  const ok = await onForceSync();
+                  setIsTestingSync(false);
+                  setSyncTestMessage(
+                    ok
+                      ? 'הנתונים נשמרו בענן R2 בהצלחה!'
+                      : 'שגיאה בשמירה לענן R2 – בדוק את הגדרות החיבור.'
+                  );
+                }}
+                disabled={isTestingSync}
+                className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingSync ? 'animate-spin' : ''}`} />
+                <span>סנכרן עכשיו ל-R2</span>
+              </button>
 
               <div className="flex items-center gap-2 mr-auto">
                 <button
@@ -2344,26 +2546,14 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  disabled={isTestingGas}
-                  onClick={async () => {
-                    setIsTestingGas(true);
-                    setGasTestMessage(null);
-                    const ok = await onSaveGasUrl(gasUrlInput);
-                    setIsTestingGas(false);
-                    if (!gasUrlInput.trim()) {
-                      setShowDriveSyncModal(false);
-                      return;
-                    }
-                    setGasTestMessage(
-                      ok
-                        ? 'חובר ונשמר ב-Google Drive בהצלחה! מעכשיו כל שינוי יישמר אוטומטית.'
-                        : 'לא הצלחנו לשמור בכתובת הזו. ודא שהכתובת מסתיימת ב-/exec ושהרשאת הגישה היא Anyone.'
-                    );
+                  onClick={() => {
+                    setGoogleClientId(googleClientIdInput);
+                    setGoogleApiKey(googleApiKeyInput);
+                    setSyncTestMessage('הגדרות Google Picker נשמרו בהצלחה!');
                   }}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5"
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold"
                 >
-                  {isTestingGas && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                  <span>שמור וסנכרן ל-Drive</span>
+                  שמור הגדרות
                 </button>
               </div>
             </div>

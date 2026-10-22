@@ -1,229 +1,301 @@
-import { StudentProfile, DEFAULT_GAS_WEBAPP_URL } from '../data/driveCatalog';
+import { StudentProfile, RecordingItem, DEFAULT_GAS_WEBAPP_URL } from '../data/driveCatalog';
+import { classifyFileTitle } from './trackerCalculations';
 
 export const STORAGE_KEY_GAS_URL = 'torah_trainer_gas_webapp_url';
+export const STORAGE_KEY_TEACHER_SESSION = 'torah_trainer_r2_teacher_session_v1';
+
+export interface TeacherProfile {
+  teacherId: string;
+  displayName: string;
+  email?: string;
+}
+
+export interface TeacherSession {
+  teacher: TeacherProfile;
+  token: string;
+}
 
 export interface CloudAppData {
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
+  parashaLibrary?: Record<string, RecordingItem[]>;
   updatedAt: string;
 }
 
-export function getEffectiveGasUrl(): string {
-  const urlParams = new URLSearchParams(window.location.search);
-  const fromQuery = urlParams.get('gas');
-  if (fromQuery && fromQuery.startsWith('https://script.google.com/')) {
-    return fromQuery.trim();
+export function loadTeacherSession(): TeacherSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_TEACHER_SESSION);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.teacher?.teacherId && parsed?.token) {
+      return parsed;
+    }
+  } catch {
+    // ignore
   }
-  const fromStorage = localStorage.getItem(STORAGE_KEY_GAS_URL);
-  if (fromStorage && fromStorage.trim()) {
-    return fromStorage.trim();
-  }
-  return DEFAULT_GAS_WEBAPP_URL.trim();
+  return null;
 }
 
-/**
- * Reads torah-app-data.json from the teacher's Google Drive folder via the Google Apps Script Web App
- */
-export async function fetchCloudAppData(gasUrl: string): Promise<{
+export function saveTeacherSession(session: TeacherSession | null) {
+  try {
+    if (!session) {
+      localStorage.removeItem(STORAGE_KEY_TEACHER_SESSION);
+    } else {
+      localStorage.setItem(STORAGE_KEY_TEACHER_SESSION, JSON.stringify(session));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export async function registerTeacherR2(params: {
+  username: string;
+  email?: string;
+  password: string;
+  displayName?: string;
+  initialData?: { students: StudentProfile[]; haftarotMap: Record<string, number> };
+}): Promise<{
+  session: TeacherSession;
+  data: CloudAppData | null;
+  r2Configured: boolean;
+}> {
+  const res = await fetch('/api/r2-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'register',
+      ...params,
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || 'שגיאה ביצירת חשבון מורה');
+  }
+  return {
+    session: { teacher: json.teacher, token: json.token },
+    data: json.data || null,
+    r2Configured: Boolean(json.r2Configured),
+  };
+}
+
+export async function loginTeacherR2(params: {
+  identifier: string;
+  password: string;
+}): Promise<{
+  session: TeacherSession;
+  data: CloudAppData | null;
+  r2Configured: boolean;
+}> {
+  const res = await fetch('/api/r2-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'login',
+      ...params,
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || 'שם משתמש או סיסמה שגויים');
+  }
+  return {
+    session: { teacher: json.teacher, token: json.token },
+    data: json.data || null,
+    r2Configured: Boolean(json.r2Configured),
+  };
+}
+
+export async function googleAuthTeacherR2(params: {
+  accessToken?: string;
+  idToken?: string;
+  preferredUsername?: string;
+  initialData?: { students: StudentProfile[]; haftarotMap: Record<string, number> };
+}): Promise<{
+  session: TeacherSession;
+  data: CloudAppData | null;
+  r2Configured: boolean;
+}> {
+  const res = await fetch('/api/r2-auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'google',
+      ...params,
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || 'התחברות באמצעות Google נכשלה');
+  }
+  return {
+    session: { teacher: json.teacher, token: json.token },
+    data: json.data || null,
+    r2Configured: Boolean(json.r2Configured),
+  };
+}
+
+export async function fetchR2TeacherData(teacherId: string): Promise<{
   initialized: boolean;
   data: CloudAppData | null;
+  r2Configured: boolean;
 }> {
-  const cleanUrl = gasUrl.trim();
-  if (!cleanUrl) {
-    throw new Error('Missing Google Apps Script Web App URL');
-  }
-  const sep = cleanUrl.includes('?') ? '&' : '?';
-  const res = await fetch(`${cleanUrl}${sep}action=getData&t=${Date.now()}`, {
-    method: 'GET',
-    redirect: 'follow',
-  });
+  const res = await fetch(
+    `/api/r2-data?teacher=${encodeURIComponent(teacherId)}&t=${Date.now()}`
+  );
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
   const json = await res.json();
   if (!json.ok) {
-    throw new Error(json.error || 'Apps Script returned error');
+    throw new Error(json.error || 'Failed to load teacher data from R2');
   }
   return {
     initialized: Boolean(json.initialized),
     data: json.data || null,
+    r2Configured: Boolean(json.r2Configured),
   };
 }
 
-/**
- * Writes torah-app-data.json into the teacher's Google Drive folder via the Google Apps Script Web App.
- * Uses text/plain;charset=utf-8 so the browser sends a simple POST request without CORS OPTIONS preflight.
- */
-export async function saveCloudAppData(
-  gasUrl: string,
-  payload: { students: StudentProfile[]; haftarotMap: Record<string, number> }
-): Promise<{ updatedAt: string; fileId?: string }> {
-  const cleanUrl = gasUrl.trim();
-  if (!cleanUrl) {
-    throw new Error('Missing Google Apps Script Web App URL');
-  }
-  const bodyObj = {
-    action: 'saveData',
-    data: {
-      students: payload.students,
-      haftarotMap: payload.haftarotMap,
-      updatedAt: new Date().toISOString(),
-    },
-  };
-
-  const res = await fetch(cleanUrl, {
-    method: 'POST',
-    redirect: 'follow',
-    headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
-    },
-    body: JSON.stringify(bodyObj),
-  });
-
+export async function fetchR2StudentData(
+  teacherId: string,
+  studentId: string
+): Promise<{
+  student: StudentProfile | null;
+  updatedAt: string | null;
+}> {
+  const res = await fetch(
+    `/api/r2-data?teacher=${encodeURIComponent(teacherId)}&student=${encodeURIComponent(
+      studentId
+    )}&t=${Date.now()}`
+  );
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
   const json = await res.json();
   if (!json.ok) {
-    throw new Error(json.error || 'Failed to save to Drive');
+    throw new Error(json.error || 'Failed to load student data from R2');
+  }
+  return {
+    student: json.student || null,
+    updatedAt: json.updatedAt || null,
+  };
+}
+
+export async function saveR2TeacherData(params: {
+  teacherId: string;
+  token: string;
+  students: StudentProfile[];
+  haftarotMap: Record<string, number>;
+}): Promise<{ updatedAt: string; storage: string; r2Configured: boolean }> {
+  const res = await fetch('/api/r2-data', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.token}`,
+    },
+    body: JSON.stringify({
+      teacherId: params.teacherId,
+      token: params.token,
+      students: params.students,
+      haftarotMap: params.haftarotMap,
+    }),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || 'שגיאה בשמירת הנתונים לענן R2');
   }
   return {
     updatedAt: json.updatedAt || new Date().toISOString(),
-    fileId: json.fileId,
+    storage: json.storage || 'r2',
+    r2Configured: Boolean(json.r2Configured),
   };
 }
 
-/**
- * Uploads a local audio recording file directly into the teacher's Google Drive folder via the Apps Script
- */
-export async function uploadAudioToDrive(
-  gasUrl: string,
-  params: {
-    folderId?: string;
-    fileName: string;
-    mimeType: string;
-    base64Data: string;
-  }
-): Promise<{ id: string; name: string; viewUrl: string }> {
-  const cleanUrl = gasUrl.trim();
-  if (!cleanUrl) {
-    throw new Error('Missing Google Apps Script Web App URL');
-  }
-  const res = await fetch(cleanUrl, {
+export async function uploadLocalFileToR2(params: {
+  teacherId: string;
+  token: string;
+  studentId: string;
+  fileName: string;
+  mimeType: string;
+  ext: string;
+  base64Data: string;
+}): Promise<{
+  id: string;
+  r2Key: string;
+  r2Url: string;
+  viewUrl: string;
+  name: string;
+  ext: string;
+}> {
+  const res = await fetch('/api/r2-media', {
     method: 'POST',
-    redirect: 'follow',
     headers: {
-      'Content-Type': 'text/plain;charset=utf-8',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.token}`,
     },
-    body: JSON.stringify({
-      action: 'uploadAudio',
-      ...params,
-    }),
+    body: JSON.stringify(params),
   });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
   const json = await res.json();
-  if (!json.ok) {
-    throw new Error(json.error || 'Audio upload to Drive failed');
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || 'העלאת הקובץ לענן R2 נכשלה');
   }
   return {
     id: json.id,
-    name: json.name,
+    r2Key: json.r2Key,
+    r2Url: json.r2Url,
     viewUrl: json.viewUrl,
+    name: json.name,
+    ext: json.ext,
   };
 }
 
-export const GOOGLE_APPS_SCRIPT_CODE = `const ROOT_FOLDER_ID = '0B6cVWsWs-t94Y2xzWnJaWlF0ZXc';
-const DATA_FILENAME = 'torah-app-data.json';
-
-function jsonResponse(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
-    ContentService.MimeType.JSON
-  );
-}
-
-function getOrCreateDataFile(folder) {
-  const files = folder.getFilesByName(DATA_FILENAME);
-  return files.hasNext() ? files.next() : null;
-}
-
-function doGet(e) {
-  try {
-    const params = (e && e.parameter) || {};
-    if (params.action === 'listFolder' && params.folderId) {
-      const targetFolder = DriveApp.getFolderById(params.folderId);
-      const filesIter = targetFolder.getFiles();
-      const items = [];
-      while (filesIter.hasNext()) {
-        const f = filesIter.next();
-        items.push({
-          id: f.getId(),
-          name: f.getName(),
-          mimeType: f.getMimeType(),
-          size: f.getSize(),
-          viewUrl: f.getUrl(),
-        });
-      }
-      return jsonResponse({ ok: true, items: items });
-    }
-
-    const folder = DriveApp.getFolderById(ROOT_FOLDER_ID);
-    const file = getOrCreateDataFile(folder);
-    if (!file) {
-      return jsonResponse({ ok: true, initialized: false, data: null });
-    }
-    const content = file.getBlob().getDataAsString('UTF-8');
-    return jsonResponse({
-      ok: true,
-      initialized: true,
-      data: JSON.parse(content),
-      fileId: file.getId(),
-    });
-  } catch (err) {
-    return jsonResponse({ ok: false, error: String(err) });
+export async function transferDriveFilesToR2(params: {
+  teacherId: string;
+  token: string;
+  studentId: string;
+  folderId?: string;
+  resourceKey?: string | null;
+  fileId?: string;
+  fileName?: string;
+  ext?: string;
+  files?: Array<{ id: string; name?: string; mimeType?: string; resourceKey?: string | null }>;
+  oauthToken?: string;
+}): Promise<RecordingItem[]> {
+  const res = await fetch('/api/r2-transfer-drive', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${params.token}`,
+    },
+    body: JSON.stringify(params),
+  });
+  const json = await res.json();
+  if (!res.ok || !json.ok) {
+    throw new Error(json.error || 'שגיאה בהעברת קבצים מ-Google Drive אל ענן R2');
   }
+
+  const items = Array.isArray(json.items) ? json.items : [];
+  return items.map((item: any) => {
+    const classified = classifyFileTitle(String(item.name || ''));
+    return {
+      id: item.id,
+      title: String(item.name || '').trim() || classified.aliyah,
+      aliyah: classified.aliyah,
+      category: classified.category,
+      ext: (item.ext || classified.ext || 'aac') as RecordingItem['ext'],
+      r2Key: item.r2Key,
+      r2Url: item.r2Url,
+      viewUrl: item.viewUrl || item.r2Url,
+      visible: true,
+    };
+  });
 }
 
-function doPost(e) {
-  try {
-    const body = JSON.parse(e.postData.contents);
-    const action = body.action || 'saveData';
-    const rootFolder = DriveApp.getFolderById(ROOT_FOLDER_ID);
-
-    if (action === 'saveData') {
-      const payloadStr = JSON.stringify(body.data, null, 2);
-      const existing = getOrCreateDataFile(rootFolder);
-      const file = existing
-        ? existing.setContent(payloadStr)
-        : rootFolder.createFile(DATA_FILENAME, payloadStr, MimeType.PLAIN_TEXT);
-      return jsonResponse({
-        ok: true,
-        fileId: file.getId(),
-        updatedAt: new Date().toISOString(),
-      });
-    }
-
-    if (action === 'uploadAudio') {
-      const folderId = body.folderId || ROOT_FOLDER_ID;
-      const targetFolder = DriveApp.getFolderById(folderId);
-      const decoded = Utilities.base64Decode(body.base64Data);
-      const blob = Utilities.newBlob(decoded, body.mimeType || 'audio/mp4', body.fileName || 'recording.m4a');
-      const createdFile = targetFolder.createFile(blob);
-      try {
-        createdFile.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      } catch (_) {}
-      return jsonResponse({
-        ok: true,
-        id: createdFile.getId(),
-        name: createdFile.getName(),
-        viewUrl: createdFile.getUrl(),
-      });
-    }
-
-    return jsonResponse({ ok: false, error: 'Unknown action: ' + action });
-  } catch (err) {
-    return jsonResponse({ ok: false, error: String(err) });
-  }
-}`;
-
+// Legacy exports kept for backward compatibility
+export function getEffectiveGasUrl(): string {
+  return DEFAULT_GAS_WEBAPP_URL.trim();
+}
+export const GOOGLE_APPS_SCRIPT_CODE = '';
+export async function uploadAudioToDrive(): Promise<any> {
+  throw new Error('Replaced by uploadLocalFileToR2');
+}

@@ -15,6 +15,8 @@ dist-ssr
 
 # Vercel
 .vercel
+.r2-local
+cloudflare token.yaml
 
 # Environment variables
 .env
