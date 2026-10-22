@@ -1,7 +1,6 @@
 import type { TextDisplayMode, TextFontSize } from './sefariaApi';
 
 export interface StudentLocalPreferences {
-  pitchShift: number; // in semitones, default 0 (no pitch shift)
   playbackRate: number; // speed multiplier, default 1.0
   isLooping: boolean; // default false
   textDisplayMode: TextDisplayMode; // 'full' | 'no_nikud' | 'tikkun' | 'nikud_only'
@@ -9,7 +8,6 @@ export interface StudentLocalPreferences {
 }
 
 export const DEFAULT_STUDENT_PREFERENCES: StudentLocalPreferences = {
-  pitchShift: 0,
   playbackRate: 1.0,
   isLooping: false,
   textDisplayMode: 'full',
@@ -28,10 +26,6 @@ export function loadStudentPreferences(studentId?: string): StudentLocalPreferen
     if (!raw) return { ...DEFAULT_STUDENT_PREFERENCES };
     const parsed = JSON.parse(raw);
     return {
-      pitchShift:
-        typeof parsed.pitchShift === 'number' && Number.isFinite(parsed.pitchShift)
-          ? Math.max(-12, Math.min(12, parsed.pitchShift))
-          : DEFAULT_STUDENT_PREFERENCES.pitchShift,
       playbackRate:
         typeof parsed.playbackRate === 'number' &&
         [0.75, 0.85, 1.0, 1.15, 1.25].includes(parsed.playbackRate)
@@ -80,3 +74,38 @@ export function formatPitchLabel(semitones: number): string {
   return `${sign} חצאי טון`;
 }
 
+function getRecordingPitchKey(studentId: string | undefined, recordingId: string): string {
+  return `torah_trainer_recording_pitch_v1_${JSON.stringify([
+    studentId?.toLowerCase().trim() || 'default',
+    recordingId,
+  ])}`;
+}
+
+function normalizePitch(pitch: unknown): number {
+  return typeof pitch === 'number' && Number.isFinite(pitch)
+    ? Math.max(-6, Math.min(6, Math.round(pitch * 2) / 2))
+    : 0;
+}
+
+export function loadRecordingPitch(studentId: string | undefined, recordingId: string): number {
+  if (typeof localStorage === 'undefined') return 0;
+  try {
+    const raw = localStorage.getItem(getRecordingPitchKey(studentId, recordingId));
+    return raw === null ? 0 : normalizePitch(JSON.parse(raw));
+  } catch (error) {
+    console.warn('Could not load recording pitch:', error);
+    return 0;
+  }
+}
+
+export function saveRecordingPitch(
+  studentId: string | undefined,
+  recordingId: string,
+  pitch: number
+): void {
+  try {
+    localStorage.setItem(getRecordingPitchKey(studentId, recordingId), JSON.stringify(normalizePitch(pitch)));
+  } catch (error) {
+    console.warn('Could not save recording pitch:', error);
+  }
+}

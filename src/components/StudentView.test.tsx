@@ -26,6 +26,7 @@ describe('student file labels', () => {
     expect(html).not.toContain('private-recording.mp3');
     expect(html).not.toContain('private-document.pdf');
     expect(html).not.toContain('Hidden portion');
+    expect(html).not.toContain('Pitch');
   });
 
   it('sorts Torah portions and excludes unassigned folders and other sections', () => {

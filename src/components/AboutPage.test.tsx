@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { AboutLink, AboutPage } from './AboutPage';
 import { AudioPlayerBar } from './AudioPlayerBar';
 import type { RecordingItem } from '../types';
+import { saveRecordingPitch } from '../utils/studentPreferences';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -40,6 +41,28 @@ describe('About page', () => {
 });
 
 describe('player controls', () => {
+  it('restores each recording pitch for the selected student without using a global default', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+    const recording: RecordingItem = {
+      id: 'first', title: 'Recording', aliyah: 'First',
+      category: 'blessings', ext: 'mp3', viewUrl: '/audio',
+    };
+    saveRecordingPitch('student', 'first', 2.5);
+    saveRecordingPitch('student', 'second', -1);
+    const renderPlayer = (studentId: string, id: string) => renderToStaticMarkup(
+      <AudioPlayerBar recording={{ ...recording, id }} studentId={studentId} onClose={() => {}} hideText />
+    );
+    expect(renderPlayer('student', 'first')).toContain('<span dir="ltr">+2.5</span>');
+    expect(renderPlayer('student', 'second')).toContain('<span dir="ltr">-1</span>');
+    expect(renderPlayer('other', 'first')).toContain('<span dir="ltr">סולם</span>');
+    expect(renderPlayer('student', 'unplayed')).toContain('<span dir="ltr">סולם</span>');
+    expect(renderPlayer('student', 'first')).toContain('<span dir="ltr">+2.5</span>');
+  });
+
   it('shows only the display label for students but retains teacher filename details', () => {
     const recording: RecordingItem = {
       id: 'test', title: 'original-private-file.mp3', aliyah: 'First portion',

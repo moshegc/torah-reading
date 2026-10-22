@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   BookOpen,
   ScrollText,
@@ -12,9 +12,6 @@ import {
   ExternalLink,
   X,
   CheckCircle2,
-  Sliders,
-  Minus,
-  Plus,
 } from 'lucide-react';
 import type { StudentProfile, RecordingItem } from '../types';
 import {
@@ -22,11 +19,6 @@ import {
   formatDateIL,
   getMediaStreamUrl,
 } from '../utils/trackerCalculations';
-import {
-  loadStudentPreferences,
-  saveStudentPreferences,
-  formatPitchLabel,
-} from '../utils/studentPreferences';
 import { AudioPlayerBar } from './AudioPlayerBar';
 import { AboutLink } from './AboutPage';
 import { TorahTextViewer } from './TorahTextViewer';
@@ -79,19 +71,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
   const [standaloneTorahReader, setStandaloneTorahReader] = useState<boolean>(false);
   const [standaloneHaftarahReader, setStandaloneHaftarahReader] = useState<boolean>(false);
   const [previewDoc, setPreviewDoc] = useState<RecordingItem | null>(null);
-  const [pitchShift, setPitchShift] = useState<number>(
-    () => loadStudentPreferences(student.id).pitchShift
-  );
-
-  useEffect(() => {
-    setPitchShift(loadStudentPreferences(student.id).pitchShift);
-  }, [student.id]);
-
-  const handlePitchChange = (nextPitch: number) => {
-    const clamped = Math.max(-6, Math.min(6, Math.round(nextPitch * 2) / 2));
-    setPitchShift(clamped);
-    saveStudentPreferences(student.id, { pitchShift: clamped });
-  };
 
   const stats = useMemo(() => calculateStudentStats(student), [student]);
 
@@ -205,49 +184,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
             />
           </div>
 
-          {/* Personalized Pitch Shift Setting (saved locally in student's browser) */}
-          <div className="mt-4 bg-white/10 border border-white/15 rounded-2xl px-3.5 py-2.5 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <Sliders className="w-4 h-4 text-indigo-300 shrink-0" />
-              <div className="text-xs">
-                <span className="text-indigo-200 font-medium">התאמת גובה צליל (Pitch): </span>
-                <span className="font-extrabold text-white">
-                  {formatPitchLabel(pitchShift)}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 shrink-0" dir="ltr">
-              <button
-                type="button"
-                onClick={() => handlePitchChange(pitchShift - 0.5)}
-                disabled={pitchShift <= -6}
-                className="w-7 h-7 rounded-lg bg-white/15 hover:bg-white/25 disabled:opacity-40 text-white flex items-center justify-center transition active:scale-95"
-                title="הנמך"
-              >
-                <Minus className="w-3.5 h-3.5" />
-              </button>
-              {pitchShift !== 0 && (
-                <button
-                  type="button"
-                  onClick={() => handlePitchChange(0)}
-                  className="px-2 h-7 rounded-lg bg-indigo-500/40 hover:bg-indigo-500/60 text-[11px] font-bold text-white transition"
-                  title="איפוס לברירת מחדל (ללא שינוי)"
-                >
-                  0
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => handlePitchChange(pitchShift + 0.5)}
-                disabled={pitchShift >= 6}
-                className="w-7 h-7 rounded-lg bg-white/15 hover:bg-white/25 disabled:opacity-40 text-white flex items-center justify-center transition active:scale-95"
-                title="הגבה"
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
         </div>
       </header>
 
@@ -828,8 +764,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
         haftarahName={student.haftarah}
         studentPortions={visiblePortions}
         studentId={student.id}
-        pitchShift={pitchShift}
-        onPitchShiftChange={handlePitchChange}
         showTextExternally={showTextPanel}
         onToggleTextExternally={() => setShowTextPanel((prev) => {
           const next = !prev;

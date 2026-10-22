@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Play,
   Pause,
@@ -18,6 +18,8 @@ import { getMediaStreamUrl } from '../utils/trackerCalculations';
 import {
   loadStudentPreferences,
   saveStudentPreferences,
+  loadRecordingPitch,
+  saveRecordingPitch,
   formatPitchLabel,
 } from '../utils/studentPreferences';
 import {
@@ -33,8 +35,6 @@ interface AudioPlayerBarProps {
   haftarahName?: string;
   studentPortions?: RecordingItem[];
   studentId?: string;
-  pitchShift?: number;
-  onPitchShiftChange?: (nextPitch: number) => void;
   showTextExternally?: boolean;
   onToggleTextExternally?: () => void;
   /** Hide the Sefaria verse text entirely (e.g. teacher view). */
@@ -50,8 +50,6 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   haftarahName,
   studentPortions,
   studentId,
-  pitchShift: controlledPitchShift,
-  onPitchShiftChange,
   showTextExternally,
   onToggleTextExternally,
   hideText = false,
@@ -70,15 +68,23 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   const [duration, setDuration] = useState(0);
   const [isLooping, setIsLooping] = useState<boolean>(initialPrefs.isLooping);
   const [playbackRate, setPlaybackRate] = useState<number>(initialPrefs.playbackRate);
-  const [internalPitchShift, setInternalPitchShift] = useState<number>(
-    initialPrefs.pitchShift
+  const savedPitch = useMemo(
+    () => recording ? loadRecordingPitch(studentId, recording.id) : 0,
+    [studentId, recording?.id]
   );
+  const [pitchSetting, setPitchSetting] = useState({
+    studentId,
+    recordingId: recording?.id,
+    value: savedPitch,
+  });
   const [showPitchPanel, setShowPitchPanel] = useState(false);
   const [showInternalText, setShowInternalText] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const pitchShift =
-    controlledPitchShift !== undefined ? controlledPitchShift : internalPitchShift;
+    pitchSetting.studentId === studentId && pitchSetting.recordingId === recording?.id
+      ? pitchSetting.value
+      : savedPitch;
 
   const hasSefariaText =
     !hideText &&
@@ -104,7 +110,6 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     const prefs = loadStudentPreferences(studentId);
     setIsLooping(prefs.isLooping);
     setPlaybackRate(prefs.playbackRate);
-    setInternalPitchShift(prefs.pitchShift);
     if (audioRef.current) {
       audioRef.current.loop = prefs.isLooping;
       audioRef.current.playbackRate = prefs.playbackRate;
@@ -174,10 +179,9 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
   const updatePitchShift = (nextPitch: number) => {
     const clamped = Math.max(-6, Math.min(6, Math.round(nextPitch * 2) / 2));
-    setInternalPitchShift(clamped);
-    saveStudentPreferences(studentId, { pitchShift: clamped });
-    if (onPitchShiftChange) {
-      onPitchShiftChange(clamped);
+    if (recording) {
+      setPitchSetting({ studentId, recordingId: recording.id, value: clamped });
+      saveRecordingPitch(studentId, recording.id, clamped);
     }
   };
 
@@ -229,7 +233,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       cancelled = true;
       audio.pause();
     };
-  }, [recording?.id, recording?.customAudioDataUrl]);
+  }, [studentId, recording?.id, recording?.customAudioDataUrl]);
 
   const togglePlay = async () => {
     const audio = audioRef.current;
