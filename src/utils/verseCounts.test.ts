@@ -67,7 +67,7 @@ describe('countSelectedVerses', () => {
 
   it('uses the Sephardi haftarah when requested', () => {
     const r = reading('Bereshit');
-    const res = countSelectedVerses(r, { haftarah: true }, 'sephardi');
+    const res = countSelectedVerses(r, { haftarah: true }, { tradition: 'sephardi' });
     expect(res.haftarah).toBe(r.haftarahSephardiCount);
     expect(r.haftarahSephardiCount).not.toBe(r.haftarahCount);
   });
@@ -99,5 +99,65 @@ describe('joint parashot and holidays', () => {
     const day1 = reading('Sukkot Shabbat Chol ha-Moed (Day 1)');
     const day3 = reading('Sukkot Shabbat Chol ha-Moed (Day 3)');
     expect(day1.maftir?.ref).not.toBe(day3.maftir?.ref);
+  });
+});
+
+
+describe('special maftir', () => {
+  const special = (id: string) => reading(id);
+
+  it('adds a special maftir even when the 7th aliyah is selected (Shekalim on Mishpatim)', () => {
+    const r = reading('Mishpatim');
+    const seventh = countSelectedVerses(r, { aliyot: ['7'] }).torah;
+    const withShekalim = countSelectedVerses(
+      r,
+      { aliyot: ['7'], maftir: true },
+      { special: special('Shabbat Shekalim') }
+    ).torah;
+    expect(withShekalim).toBe(seventh + 6);
+  });
+
+  it('adds Zachor (3 verses) and Parah (22 verses) maftirs', () => {
+    expect(
+      countSelectedVerses(reading('Tetzaveh'), { maftir: true }, { special: special('Shabbat Zachor') }).torah
+    ).toBe(3);
+    expect(
+      countSelectedVerses(reading('Chukat'), { maftir: true }, { special: special('Shabbat Parah') }).torah
+    ).toBe(22);
+  });
+
+  it('replaces the regular maftir instead of adding both', () => {
+    const r = reading('Mishpatim');
+    const res = countSelectedVerses(r, { maftir: true }, { special: special('Shabbat Shekalim') });
+    expect(res.torah).toBe(6);
+  });
+
+  it('uses the special haftarah, with tradition-specific variants', () => {
+    const r = reading('Mishpatim');
+    const sp = special('Shabbat Shekalim');
+    expect(countSelectedVerses(r, { haftarah: true }, { special: sp }).haftarah).toBe(sp.haftarahCount);
+    expect(countSelectedVerses(r, { haftarah: true }, { special: sp, tradition: 'sephardi' }).haftarah).toBe(
+      sp.haftarahSephardiCount
+    );
+  });
+
+  it('does not double count the Rosh Chodesh maftir when it lies inside the parasha (Pinchas)', () => {
+    const r = reading('Pinchas');
+    const res = countSelectedVerses(
+      r,
+      { aliyot: 'all', maftir: true },
+      { special: special('Shabbat Rosh Chodesh') }
+    );
+    expect(res.torah).toBe(r.torahCount);
+  });
+
+  it('adds the Rosh Chodesh maftir when it lies outside the parasha (Bereshit)', () => {
+    const r = reading('Bereshit');
+    const res = countSelectedVerses(
+      r,
+      { aliyot: 'all', maftir: true },
+      { special: special('Shabbat Rosh Chodesh') }
+    );
+    expect(res.torah).toBe(r.torahCount + 7);
   });
 });

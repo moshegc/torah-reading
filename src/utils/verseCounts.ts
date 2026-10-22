@@ -71,6 +71,37 @@ export function getHaftarahSegments(
   return tradition === 'sephardi' ? reading.haftarahSephardi : reading.haftarah;
 }
 
+export interface VerseCountOptions {
+  /** Haftarah tradition (default: ashkenazi) */
+  tradition?: HaftarahTradition;
+  /**
+   * A special Shabbat reading (Rosh Chodesh, Shekalim, Zachor, Parah, HaChodesh, Chanukah, ...)
+   * that replaces the regular parasha's maftir and haftarah (and any aliyot it defines, e.g. the
+   * 7th aliyah on Shabbat Rosh Chodesh). The special maftir is read *instead of* the parasha's own
+   * maftir, so its verses are normally not part of the parasha and are added to the count.
+   */
+  special?: VerseReadingData | null;
+}
+
+/** The reading as actually read, with a special Shabbat's maftir/haftarah/aliyot applied. */
+export function applySpecialReading(
+  reading: VerseReadingData,
+  special?: VerseReadingData | null
+): VerseReadingData {
+  if (!special) return reading;
+  return {
+    ...reading,
+    aliyot: { ...reading.aliyot, ...special.aliyot },
+    maftir: special.maftir ?? reading.maftir,
+    haftarah: special.haftarah.length ? special.haftarah : reading.haftarah,
+    haftarahSephardi: special.haftarahSephardi.length
+      ? special.haftarahSephardi
+      : special.haftarah.length
+        ? special.haftarah
+        : reading.haftarahSephardi,
+  };
+}
+
 /** Segments of the Torah reading covered by the selection (may overlap each other). */
 export function getSelectedTorahSegments(
   reading: VerseReadingData,
@@ -94,13 +125,18 @@ export function getSelectedTorahSegments(
 
 /**
  * How many verses the student needs to learn for the selected parts of a reading.
- * Overlaps (7th aliyah + maftir, Monday/Thursday + 1st aliyah, ...) are counted once.
+ * Overlaps (7th aliyah + maftir, Monday/Thursday + 1st aliyah, ...) are counted once, while a
+ * special maftir (Rosh Chodesh, Parah, Zachor, HaChodesh, Shekalim) is added because it lies
+ * outside the parasha's own verses.
  */
 export function countSelectedVerses(
-  reading: VerseReadingData,
+  baseReading: VerseReadingData,
   selection: VerseSelection,
-  tradition: HaftarahTradition = 'ashkenazi'
+  options: VerseCountOptions = {}
 ): VerseCountResult {
+  const { tradition = 'ashkenazi', special } = options;
+  const reading = applySpecialReading(baseReading, special);
+
   const torahSegments = getSelectedTorahSegments(reading, selection);
   const torah = torahSegments.length ? countDistinctVerses(torahSegments) : 0;
 
