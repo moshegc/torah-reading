@@ -241,6 +241,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [localFileName, setLocalFileName] = useState('');
   const [localMimeType, setLocalMimeType] = useState('audio/aac');
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [studentUploadFolder, setStudentUploadFolder] = useState('');
 
   const managingStudent = useMemo(
     () => students.find((s) => s.id === managingStudentId) || null,
@@ -273,6 +274,22 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     setSingleLinkInput('');
     setLocalDataUrl(undefined);
     setLocalFileName('');
+    const parasha = student.parasha.trim();
+    const alias = parasha === 'בחוקותי' ? 'בחוקתי' : parasha === 'חקת' ? 'חוקת' : parasha;
+    setStudentUploadFolder(Object.prototype.hasOwnProperty.call(parashaLibrary, parasha) ? parasha
+      : Object.prototype.hasOwnProperty.call(parashaLibrary, alias) ? alias : parasha);
+  };
+
+  const saveStudentItems = async (items: RecordingItem[], driveFolderUrl?: string) => {
+    if (!managingStudent) throw new Error('התלמיד אינו קיים');
+    if (!studentUploadFolder.trim()) throw new Error('יש לבחור תיקייה לשמירה');
+    if (!await onChangeLibrary({
+      action: 'add-student-items',
+      folder: studentUploadFolder,
+      studentId: managingStudent.id,
+      items,
+      driveFolderUrl,
+    })) throw new Error('שמירת הקבצים במאגר ובשיוכי התלמיד לא הושלמה. בדוק את הודעת השמירה ונסה שוב.');
   };
 
   const buildStudentShareUrl = (student: StudentProfile) => {
@@ -331,16 +348,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       if (items.length === 0) {
         setFolderLoadMsg('לא נמצאו קבצים בתיקייה זו.');
       } else {
-        const existingIds = new Set((managingStudent.portions || []).map((p) => p.id));
-        const merged = [
-          ...(managingStudent.portions || []),
-          ...items.filter((i) => !existingIds.has(i.id)),
-        ];
-        onUpdateStudent({
-          ...managingStudent,
-          driveFolderUrl: folderUrlInput.trim(),
-          portions: merged,
-        });
+        await saveStudentItems(items, folderUrlInput.trim());
         setFolderLoadMsg(
           `נשמרו ${items.length} קבצים מ-Google Drive בהצלחה! סמן למטה אילו מהם יהיו גלויים לתלמיד.`
         );
@@ -398,15 +406,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       }
 
       if (allTransferred.length > 0) {
-        const existingIds = new Set((managingStudent.portions || []).map((p) => p.id));
-        const merged = [
-          ...(managingStudent.portions || []),
-          ...allTransferred.filter((i) => !existingIds.has(i.id)),
-        ];
-        onUpdateStudent({
-          ...managingStudent,
-          portions: merged,
-        });
+        await saveStudentItems(allTransferred);
         setFolderLoadMsg(
           `נשמרו ${allTransferred.length} קבצים מ-Google Drive בהצלחה!`
         );
@@ -427,7 +427,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     if (!managingStudent) return;
 
     const parsed = parseDriveUrl(singleLinkInput);
-    if (!parsed && !localDataUrl) return;
+    if (!parsed && !localDataUrl) {
+      setFolderLoadMsg('יש לבחור קובץ או להזין קישור תקין ל-Google Drive');
+      return;
+    }
 
     const title =
       localFileName || `${managingStudent.parasha} - ${singleAliyahLabel}.${singleExt}`;
@@ -459,10 +462,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           visible: true,
         };
 
-        onUpdateStudent({
-          ...managingStudent,
-          portions: [...(managingStudent.portions || []), r2Portion],
-        });
+        await saveStudentItems([r2Portion]);
+        setFolderLoadMsg('הקובץ נשמר בתיקייה ובשיוכי התלמיד בהצלחה!');
         setSingleLinkInput('');
         setLocalDataUrl(undefined);
         setLocalFileName('');
@@ -493,10 +494,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 }
               : item
           );
-          onUpdateStudent({
-            ...managingStudent,
-            portions: [...(managingStudent.portions || []), ...customized],
-          });
+          await saveStudentItems(customized);
           setSingleLinkInput('');
           setLocalDataUrl(undefined);
           setLocalFileName('');
@@ -1657,6 +1655,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             </div>
 
             <div className="p-5 overflow-y-auto space-y-5 flex-1">
+              <div>
+                <label htmlFor="student-upload-folder" className="block text-xs font-bold text-slate-800 mb-1">תיקייה לשמירת קבצים חדשים</label>
+                <select id="student-upload-folder" value={studentUploadFolder} onChange={(event) => setStudentUploadFolder(event.target.value)} disabled={isUploadingAudio || isLoadingFolder || isPickingFromDrive} className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-sm">
+                  {[...new Set([managingStudent.parasha.trim(), ...Object.keys(parashaLibrary)])].filter(Boolean).map((name) => (
+                    <option key={name} value={name}>{name}{Object.prototype.hasOwnProperty.call(parashaLibrary, name) ? '' : ' (תיקייה חדשה)'}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-500 mt-1">הקבצים יישמרו גם במאגר וגם בשיוכי התלמיד. ברירת המחדל היא תיקיית הפרשה של התלמיד.</p>
+              </div>
               {/* Option A: Direct Google Drive Picker OR Folder Link -> Transfer to R2 */}
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">

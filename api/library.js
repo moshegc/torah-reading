@@ -23,6 +23,14 @@ function sameItem(a, b) {
   return a.id === b.id || Boolean(a.r2Key && a.r2Key === b.r2Key);
 }
 
+function folderName(value) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  if (!name || ['__proto__', 'prototype', 'constructor'].includes(name)) {
+    throw new LibraryError('יש להזין שם תיקייה תקין');
+  }
+  return name;
+}
+
 function recordings(data) {
   return [
     ...Object.values(data.parashaLibrary || {}).flat(),
@@ -45,18 +53,70 @@ export function applyLibraryChange(data, change, teacherId) {
   let students = data.students || [];
   let removed = [];
   if (change.action === 'retry-deletions') return data;
-  const folder = typeof change.folder === 'string' ? change.folder.trim() : '';
-  if (!folder || ['__proto__', 'prototype', 'constructor'].includes(folder)) {
-    throw new LibraryError('יש להזין שם תיקייה תקין');
-  }
+  const folder = folderName(change.folder);
 
-  if (change.action === 'create-folder') {
+  if (change.action === 'add-student-items') {
+    if (!students.some((student) => student.id === change.studentId)) {
+      throw new LibraryError('התלמיד אינו קיים', 404);
+    }
+    if (!Array.isArray(change.items) || change.items.length === 0) {
+      throw new LibraryError('יש לבחור חומרי לימוד להוספה');
+    }
+    for (const item of change.items) {
+      validateItem(item, teacherId);
+      if (recordings(data).some((existing) => existing.id === item.id && existing.r2Key !== item.r2Key)) {
+        throw new LibraryError('יש להשתמש בהחלפת קובץ כדי לעדכן חומר לימוד קיים', 409);
+      }
+    }
+    const merge = (items) => [
+      ...items,
+      ...change.items.filter((item, index, all) =>
+        !items.some((existing) => existing.id === item.id) &&
+        all.findIndex((other) => other.id === item.id) === index),
+    ];
+    library[folder] = merge(library[folder] || []);
+    students = students.map((student) => student.id === change.studentId
+      ? {
+          ...student, portions: merge(student.portions || []),
+          ...(typeof change.driveFolderUrl === 'string' ? { driveFolderUrl: change.driveFolderUrl } : {}),
+        }
+      : student);
+  } else if (change.action === 'create-folder') {
     if (hasOwn(library, folder)) throw new LibraryError('תיקייה בשם זה כבר קיימת', 409);
     library[folder] = [];
   } else {
     if (!hasOwn(library, folder)) throw new LibraryError('התיקייה אינה קיימת', 404);
     const items = library[folder];
-    if (change.action === 'add-item') {
+    if (change.action === 'rename-folder') {
+      const name = folderName(change.name);
+      if (name !== folder && hasOwn(library, name)) throw new LibraryError('תיקייה בשם זה כבר קיימת', 409);
+      if (name !== folder) {
+        library[name] = items;
+        delete library[folder];
+      }
+    } else if (change.action === 'move-item' || change.action === 'rename-item') {
+      const target = items.find((item) => item.id === change.itemId);
+      if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
+      if (change.action === 'move-item') {
+        const destination = folderName(change.destination);
+        if (!hasOwn(library, destination)) throw new LibraryError('התיקייה אינה קיימת', 404);
+        if (destination !== folder) {
+          if (library[destination].some((item) => sameItem(item, target))) {
+            throw new LibraryError('חומר הלימוד כבר קיים בתיקיית היעד', 409);
+          }
+          library[destination] = [...library[destination], target];
+          library[folder] = items.filter((item) => item.id !== target.id);
+        }
+      } else {
+        const name = typeof change.name === 'string' ? change.name.trim() : '';
+        if (!name) throw new LibraryError('יש להזין שם לחומר הלימוד');
+        const rename = (item) => sameItem(item, target) ? { ...item, aliyah: name } : item;
+        for (const name of Object.keys(library)) library[name] = library[name].map(rename);
+        students = students.map((student) => ({
+          ...student, portions: (student.portions || []).map(rename),
+        }));
+      }
+    } else if (change.action === 'add-item') {
       validateItem(change.item, teacherId);
       const existing = items.find((item) => item.id === change.item.id);
       if (existing && existing.r2Key !== change.item.r2Key) {

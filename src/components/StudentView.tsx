@@ -387,9 +387,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
                             <div className="font-bold text-slate-900 text-base truncate">
                               {rec.aliyah}
                             </div>
-                            <div className="text-xs text-slate-500 truncate mt-0.5">
-                              {rec.title}
-                            </div>
                           </div>
                         </div>
 
@@ -590,9 +587,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
                               <div className="font-bold text-slate-900 text-base truncate">
                                 {rec.aliyah}
                               </div>
-                              <div className="text-xs text-slate-500 truncate mt-0.5">
-                                {rec.title}
-                              </div>
                             </div>
                           </div>
 
@@ -671,9 +665,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
                           <div className="font-bold text-slate-900 text-sm truncate">
                             {rec.aliyah}
                           </div>
-                          <div className="text-xs text-slate-500 truncate">
-                            {rec.title}
-                          </div>
                         </div>
                       </div>
                       <span className="text-xs font-bold text-amber-800 bg-amber-100 px-3 py-1 rounded-xl shrink-0">
@@ -724,9 +715,6 @@ export const StudentView: React.FC<StudentViewProps> = ({
                         <div className="min-w-0">
                           <div className="font-bold text-slate-900 text-sm truncate">
                             {rec.aliyah}
-                          </div>
-                          <div className="text-xs text-slate-500 truncate">
-                            {rec.title}
                           </div>
                         </div>
                       </div>

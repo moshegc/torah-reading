@@ -40,6 +40,22 @@ describe('About page', () => {
 });
 
 describe('player controls', () => {
+  it('shows only the display label for students but retains teacher filename details', () => {
+    const recording: RecordingItem = {
+      id: 'test', title: 'original-private-file.mp3', aliyah: 'First portion',
+      category: 'shabbat', ext: 'mp3', viewUrl: '/audio',
+    };
+    const studentHtml = renderToStaticMarkup(
+      <AudioPlayerBar recording={recording} studentId="student" onClose={() => {}} hideText />
+    );
+    expect(studentHtml).toContain('First portion');
+    expect(studentHtml).not.toContain('original-private-file.mp3');
+    const teacherHtml = renderToStaticMarkup(
+      <AudioPlayerBar recording={recording} onClose={() => {}} hideText />
+    );
+    expect(teacherHtml).toContain('original-private-file.mp3');
+  });
+
   it('offers an accessible close button instead of a Drive link', () => {
     const recording: RecordingItem = {
       id: 'test-recording',

@@ -62,6 +62,10 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [replacementId, setReplacementId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [destination, setDestination] = useState('');
+  const [renameTarget, setRenameTarget] = useState<'folder' | RecordingItem | null>(null);
+  const [renameName, setRenameName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [failedChange, setFailedChange] = useState(false);
@@ -77,6 +81,8 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
     if (!Object.prototype.hasOwnProperty.call(library, folder)) {
       setFolder(Object.keys(library)[0] ?? '');
       setReplacementId(null);
+      setRenameTarget(null);
+      setMovingId(null);
     }
   }, [library, folder]);
 
@@ -85,6 +91,8 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
     setTitle('');
     setUploadedItem(null);
     setReplacementId(null);
+    setRenameTarget(null);
+    setMovingId(null);
     if (fileInput.current) fileInput.current.value = '';
   };
 
@@ -136,10 +144,32 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   };
 
   const deleteItem = async (item: RecordingItem) => {
-    if (!window.confirm(`למחוק לצמיתות את "${item.title}"? הקובץ והשיוכים לתלמידים יימחקו ולא ניתן לשחזרם. אם הפריט קיים גם בתיקייה אחרת, הוא יוסר מתיקייה זו בלבד.`)) return;
+    if (!window.confirm(`למחוק לצמיתות את "${item.aliyah}"? הקובץ והשיוכים לתלמידים יימחקו ולא ניתן לשחזרם. אם הפריט קיים גם בתיקייה אחרת, הוא יוסר מתיקייה זו בלבד.`)) return;
     await runAction(async () => {
       if (await mutate({ action: 'delete-item', folder, itemId: item.id }, 'חומר הלימוד נמחק מהתיקייה.')) {
         if (replacementId === item.id) resetUpload();
+        if (renameTarget !== 'folder' && renameTarget?.id === item.id) setRenameTarget(null);
+        if (movingId === item.id) setMovingId(null);
+      }
+    });
+  };
+
+  const submitRename = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!renameTarget) return;
+    const name = renameName.trim();
+    const change: LibraryChange = renameTarget === 'folder'
+      ? { action: 'rename-folder', folder, name }
+      : { action: 'rename-item', folder, itemId: renameTarget.id, name };
+    await runAction(async () => {
+      if (await mutate(change, renameTarget === 'folder' ? 'שם התיקייה עודכן.' : 'השם לתצוגה עודכן גם בשיוכי התלמידים.')) {
+        if (renameTarget === 'folder') {
+          resetUpload();
+          setFolder(name);
+        } else if (replacementId === renameTarget.id) {
+          setTitle(name);
+        }
+        setRenameTarget(null);
       }
     });
   };
@@ -157,8 +187,8 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
       setFailedChange(false);
       return;
     }
-    const target = replacement ?? items.find((item) => item.title.trim() === title.trim());
-    if (target && !window.confirm(`להחליף את "${target.title}" בקובץ החדש? הקובץ הישן יימחק לצמיתות, וכל שיוכי התלמידים יעודכנו תוך שמירת הגדרות הנראות שלהם.`)) return;
+    const target = replacement ?? items.find((item) => item.aliyah.trim() === title.trim());
+    if (target && !window.confirm(`להחליף את "${target.aliyah}" בקובץ החדש? הקובץ הישן יימחק לצמיתות, וכל שיוכי התלמידים יעודכנו תוך שמירת הגדרות הנראות שלהם.`)) return;
 
     await runAction(async () => {
       let item = uploadedItem;
@@ -233,28 +263,57 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
             <button type="submit" disabled={disabled} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-bold flex items-center gap-1"><Plus className="w-4 h-4" />צור תיקייה</button>
           </form>
           {folderOptions.length > 0 ? (
-            <div className="flex items-end gap-2">
-              <div className="flex-1">
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-0">
                 <label htmlFor="library-folder" className="block text-xs font-bold text-slate-700 mb-1">תיקייה במאגר</label>
-                <select id="library-folder" value={folder} onChange={(event) => { setFolder(event.target.value); resetUpload(); setNotice(null); }} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm">
+                <select id="library-folder" value={folder} onChange={(event) => { setFolder(event.target.value); resetUpload(); setMovingId(null); setRenameTarget(null); setNotice(null); }} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm">
                   {folderOptions.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
               </div>
+              <button type="button" onClick={() => { setRenameTarget('folder'); setRenameName(folder); }} disabled={disabled || !folder} className="px-3 py-2 rounded-xl text-indigo-700 bg-indigo-50 text-sm font-bold">שנה שם</button>
               <button type="button" onClick={deleteFolder} disabled={disabled || !folder} className="px-3 py-2 rounded-xl text-rose-700 bg-rose-50 text-sm font-bold">מחק תיקייה</button>
             </div>
           ) : <p className="text-sm text-slate-500">אין תיקיות במאגר. צור תיקייה כדי להוסיף חומרי לימוד.</p>}
 
+          {renameTarget && (
+            <form onSubmit={submitRename} className="flex flex-wrap items-end gap-2">
+              <div className="flex-1">
+                <label htmlFor="library-rename" className="block text-xs font-bold text-slate-700 mb-1">{renameTarget === 'folder' ? 'שם התיקייה החדש' : 'שם לתצוגה'}</label>
+                <input id="library-rename" autoFocus required value={renameName} onChange={(event) => setRenameName(event.target.value)} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
+              </div>
+              <button type="submit" disabled={disabled || !renameName.trim()} className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-bold">שמור שם</button>
+              <button type="button" disabled={disabled} onClick={() => setRenameTarget(null)} className="px-3 py-2 text-sm text-slate-500">ביטול</button>
+            </form>
+          )}
+
           {items.length > 0 && (
             <ul className="divide-y divide-slate-200 border border-slate-200 rounded-xl">
               {items.map((item) => (
-                <li key={item.id} className="p-3 flex items-center justify-between gap-2">
+                <li key={item.id} className="p-3 flex flex-wrap items-center justify-between gap-2">
                   <a href={getMediaStreamUrl(item)} target="_blank" rel="noreferrer" className="min-w-0 flex items-center gap-2 text-sm text-slate-800">
-                    <FileText className="w-4 h-4 shrink-0" /><span className="truncate">{item.title}</span><span className="text-xs text-slate-400 uppercase">{item.ext}</span>
+                    <FileText className="w-4 h-4 shrink-0" /><span className="truncate">{item.aliyah}</span><span className="text-xs text-slate-400 uppercase">{item.ext}</span>
                   </a>
                   <div className="flex gap-2 shrink-0">
-                    <button type="button" aria-label={`החלף ${item.title}`} disabled={disabled} onClick={() => { resetUpload(); setReplacementId(item.id); setTitle(item.title); setNotice(null); fileInput.current?.focus(); }} className="text-indigo-700 p-1 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /><span>החלף</span></button>
-                    <button type="button" aria-label={`מחק ${item.title}`} disabled={disabled} onClick={() => deleteItem(item)} className="text-rose-700 p-1 text-xs font-bold flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>מחק</span></button>
+                    <button type="button" disabled={disabled} onClick={() => { setRenameTarget(item); setRenameName(item.aliyah); }} className="text-indigo-700 p-1 text-xs font-bold">שנה שם</button>
+                    <button type="button" disabled={disabled || folderOptions.length < 2} onClick={() => { setMovingId(item.id); setDestination(folderOptions.find((name) => name !== folder) ?? ''); }} className="text-indigo-700 p-1 text-xs font-bold">העבר</button>
+                    <button type="button" aria-label={`החלף ${item.aliyah}`} disabled={disabled} onClick={() => { resetUpload(); setReplacementId(item.id); setTitle(item.aliyah); setNotice(null); fileInput.current?.focus(); }} className="text-indigo-700 p-1 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /><span>החלף</span></button>
+                    <button type="button" aria-label={`מחק ${item.aliyah}`} disabled={disabled} onClick={() => deleteItem(item)} className="text-rose-700 p-1 text-xs font-bold flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>מחק</span></button>
                   </div>
+                  {movingId === item.id && (
+                    <div className="w-full flex flex-wrap gap-2 items-center">
+                      <label htmlFor="library-move-folder" className="text-xs font-bold">העבר לתיקייה</label>
+                      <select id="library-move-folder" value={destination} disabled={disabled} onChange={(event) => setDestination(event.target.value)} className="border rounded-xl px-3 py-2 text-sm">
+                        {folderOptions.filter((name) => name !== folder).map((name) => <option key={name} value={name}>{name}</option>)}
+                      </select>
+                      <button type="button" disabled={disabled || !destination} onClick={() => runAction(async () => {
+                        if (await mutate({ action: 'move-item', folder, itemId: item.id, destination }, 'חומר הלימוד הועבר. שיוכי התלמידים נשמרו.')) {
+                          setMovingId(null);
+                          if (replacementId === item.id) resetUpload();
+                        }
+                      })} className="text-indigo-700 text-xs font-bold">העבר ושמור</button>
+                      <button type="button" disabled={disabled} onClick={() => setMovingId(null)} className="text-xs text-slate-500">ביטול</button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -262,7 +321,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
           {folder && (
             <form onSubmit={submit} className="space-y-3 border-t border-slate-200 pt-4">
               <div className="flex justify-between items-center">
-                <h4 className="font-bold text-slate-800 text-sm">{replacement ? `החלפת קובץ: ${replacement.title}` : 'הוספת חומר לימוד'}</h4>
+                <h4 className="font-bold text-slate-800 text-sm">{replacement ? `החלפת קובץ: ${replacement.aliyah}` : 'הוספת חומר לימוד'}</h4>
                 {replacement && <button type="button" disabled={disabled} onClick={resetUpload} className="text-xs text-slate-500 underline">בטל החלפה</button>}
               </div>
               <div>
@@ -279,7 +338,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                   }
                   setError(null);
                   setFile(selected);
-                  setTitle(replacement?.title ?? selected?.name.replace(/\.[^.]+$/, '') ?? '');
+                  setTitle(replacement?.aliyah ?? selected?.name.replace(/\.[^.]+$/, '') ?? '');
                 }} className="w-full text-sm" />
               </div>
               <div>

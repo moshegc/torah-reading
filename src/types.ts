@@ -28,6 +28,10 @@ export type LibraryChange =
   | { action: 'add-item'; folder: string; item: RecordingItem }
   | { action: 'replace-item'; folder: string; itemId: string; item: RecordingItem }
   | { action: 'delete-item'; folder: string; itemId: string }
+  | { action: 'rename-folder'; folder: string; name: string }
+  | { action: 'rename-item'; folder: string; itemId: string; name: string }
+  | { action: 'move-item'; folder: string; itemId: string; destination: string }
+  | { action: 'add-student-items'; folder: string; studentId: string; items: RecordingItem[]; driveFolderUrl?: string }
   | { action: 'retry-deletions' };
 
 export interface StudentProfile {

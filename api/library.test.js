@@ -66,6 +66,92 @@ beforeEach(() => {
 });
 
 describe('library changes', () => {
+  it('moves a file without changing its identity, visibility or student assignments', () => {
+    const data = fixture();
+    const next = applyLibraryChange(data, {
+      action: 'move-item', folder: 'בראשית', itemId: recording.id, destination: 'כללי',
+    }, 'teacher');
+    expect(next.parashaLibrary['בראשית']).toEqual([]);
+    expect(next.parashaLibrary['כללי']).toEqual([document, recording]);
+    expect(next.students).toEqual(data.students);
+    expect(next.pendingMediaDeletes).toEqual([]);
+    expect(data.parashaLibrary['בראשית']).toEqual([recording]);
+  });
+
+  it('rejects missing move destinations and duplicate copies rather than overwriting files', () => {
+    const data = fixture();
+    const change = { action: 'move-item', folder: 'בראשית', itemId: recording.id, destination: 'missing' };
+    expect(() => applyLibraryChange(data, change, 'teacher')).toThrow('אינה קיימת');
+    data.parashaLibrary.shared = [{ ...recording, id: 'shared-copy', visible: false }];
+    expect(() => applyLibraryChange(data, { ...change, destination: 'shared' }, 'teacher')).toThrow('כבר קיים');
+    expect(() => applyLibraryChange(data, { ...change, itemId: 'missing' }, 'teacher')).toThrow('אינו קיים');
+    expect(applyLibraryChange(data, { ...change, destination: 'בראשית' }, 'teacher').parashaLibrary).toEqual(data.parashaLibrary);
+  });
+
+  it('renames a folder without changing files, student parasha or assignments', () => {
+    const data = fixture();
+    data.students[0].parasha = 'בראשית';
+    const next = applyLibraryChange(data, { action: 'rename-folder', folder: 'בראשית', name: ' Lessons ' }, 'teacher');
+    expect(next.parashaLibrary.Lessons).toEqual([recording]);
+    expect(next.parashaLibrary).not.toHaveProperty('בראשית');
+    expect(next.students).toEqual(data.students);
+    expect(next.pendingMediaDeletes).toEqual([]);
+    expect(applyLibraryChange(data, { action: 'rename-folder', folder: 'בראשית', name: 'בראשית' }, 'teacher').parashaLibrary).toEqual(data.parashaLibrary);
+  });
+
+  it.each(['', '  ', '__proto__', 'constructor', 'prototype', 'כללי'])('rejects invalid or conflicting folder rename %s', (name) => {
+    expect(() => applyLibraryChange(fixture(), { action: 'rename-folder', folder: 'בראשית', name }, 'teacher')).toThrow();
+  });
+
+  it('renames display labels across copies while preserving filenames and other metadata', () => {
+    const data = fixture();
+    data.parashaLibrary.shared = [{ ...recording, id: 'shared-id', visible: false }];
+    const next = applyLibraryChange(data, { action: 'rename-item', folder: 'בראשית', itemId: recording.id, name: ' New description ' }, 'teacher');
+    expect(next.parashaLibrary['בראשית'][0]).toEqual({ ...recording, aliyah: 'New description' });
+    expect(next.parashaLibrary.shared[0]).toEqual({ ...data.parashaLibrary.shared[0], aliyah: 'New description' });
+    expect(next.students[1].portions[0]).toEqual({ ...recording, visible: false, aliyah: 'New description' });
+    expect(next.students[0].portions[1]).toEqual(document);
+    expect(next.pendingMediaDeletes).toEqual([]);
+    expect(data.parashaLibrary['בראשית'][0]).toEqual(recording);
+  });
+
+  it.each(['', '  ', null])('rejects an empty display label %s', (name) => {
+    expect(() => applyLibraryChange(fixture(), { action: 'rename-item', folder: 'בראשית', itemId: recording.id, name }, 'teacher')).toThrow('יש להזין שם');
+  });
+
+  it('saves student uploads to the selected folder and student together, idempotently', () => {
+    const data = fixture();
+    const change = { action: 'add-student-items', folder: 'כללי', studentId: 'hidden-student', items: [replacement, replacement] };
+    const next = applyLibraryChange(data, change, 'teacher');
+    expect(next.parashaLibrary['כללי']).toEqual([document, replacement]);
+    expect(next.students[1].portions).toEqual([{ ...recording, visible: false }, replacement]);
+    expect(next.students[0]).toEqual(data.students[0]);
+    const retried = applyLibraryChange(next, change, 'teacher');
+    expect(retried.parashaLibrary).toEqual(next.parashaLibrary);
+    expect(retried.students).toEqual(next.students);
+    expect(next.pendingMediaDeletes).toEqual([]);
+  });
+
+  it('creates the default parasha folder when needed and retains Drive folder metadata', () => {
+    const next = applyLibraryChange(fixture(), {
+      action: 'add-student-items', folder: 'נח', studentId: 'visible-student',
+      items: [replacement], driveFolderUrl: 'https://drive.google.com/drive/folders/example',
+    }, 'teacher');
+    expect(next.parashaLibrary['נח']).toEqual([replacement]);
+    expect(next.students[0].portions).toContainEqual(replacement);
+    expect(next.students[0].driveFolderUrl).toBe('https://drive.google.com/drive/folders/example');
+  });
+
+  it('validates every upload and the student before changing data', () => {
+    const data = fixture();
+    const change = { action: 'add-student-items', folder: 'new', studentId: 'visible-student', items: [replacement] };
+    expect(() => applyLibraryChange(data, { ...change, studentId: 'missing' }, 'teacher')).toThrow('התלמיד אינו קיים');
+    expect(() => applyLibraryChange(data, { ...change, items: [] }, 'teacher')).toThrow();
+    expect(() => applyLibraryChange(data, { ...change, items: [replacement, { ...replacement, r2Key: 'media/other/file.mp3' }] }, 'teacher')).toThrow();
+    expect(() => applyLibraryChange(data, { ...change, items: [{ ...replacement, id: recording.id }] }, 'teacher')).toThrow('בהחלפת קובץ');
+    expect(data).toEqual(fixture());
+  });
+
   it('persists an empty custom folder without mutating the input', () => {
     const original = fixture();
     const next = applyLibraryChange(original, { action: 'create-folder', folder: ' Custom folder ' }, 'teacher');
@@ -145,6 +231,20 @@ describe('library changes', () => {
 });
 
 describe('persistent deletion workflow', () => {
+  it.each([
+    { action: 'move-item', folder: 'בראשית', itemId: recording.id, destination: 'כללי' },
+    { action: 'rename-item', folder: 'בראשית', itemId: recording.id, name: 'Display label' },
+    { action: 'rename-folder', folder: 'בראשית', name: 'Lessons' },
+    { action: 'add-student-items', folder: 'נח', studentId: 'visible-student', items: [replacement] },
+  ])('persists $action without deleting media', async (change) => {
+    const result = await request(change);
+    expect(result.status).toBe(200);
+    expect(result.body.ok).toBe(true);
+    expect(r2PutJson).toHaveBeenCalledTimes(1);
+    expect(r2DeleteObject).not.toHaveBeenCalled();
+    expect(stored).toEqual(result.body.data);
+  });
+
   it('requires a verified teacher session and never trusts a teacherId in the body', async () => {
     verifyTeacherToken.mockReturnValue(null);
     expect((await request({ action: 'delete-folder', folder: 'בראשית', teacherId: 'teacher' })).status).toBe(401);

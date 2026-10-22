@@ -357,7 +357,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
                 {parashaName ? `${parashaName} • ` : ''}
                 {recording.aliyah}
               </div>
-              <div className="text-xs text-slate-500 truncate">{recording.title}</div>
+              {!studentId && <div className="text-xs text-slate-500 truncate">{recording.title}</div>}
             </div>
           </div>
 
