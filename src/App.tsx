@@ -8,12 +8,8 @@ import {
   Loader2,
   Cloud,
 } from 'lucide-react';
-import {
-  STUDENTS as INITIAL_STUDENTS,
-  HAFTAROT_VERSE_COUNTS as INITIAL_HAFTAROT,
-  StudentProfile,
-  RecordingItem,
-} from './data/driveCatalog';
+import { HAFTAROT_VERSE_COUNTS as INITIAL_HAFTAROT } from './data/torahReference';
+import type { StudentProfile, RecordingItem } from './types';
 import { decodeStudentShareToken } from './utils/trackerCalculations';
 import {
   TeacherSession,
@@ -26,7 +22,7 @@ import {
   fetchR2StudentData,
   saveR2TeacherData,
 } from './utils/cloudSync';
-import type { TeacherSettings } from './utils/cloudSync';
+import type { CloudAppData, TeacherSettings } from './utils/cloudSync';
 import type { HaftarahTradition } from './utils/readingPlan';
 import {
   signInWithGooglePopup,
@@ -50,19 +46,18 @@ export default function App() {
   const [teacherSession, setTeacherSession] = useState<TeacherSession | null>(() =>
     loadTeacherSession()
   );
-  const [r2Configured, setR2Configured] = useState<boolean>(false);
 
   const [students, setStudents] = useState<StudentProfile[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_STUDENTS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {
       // ignore storage errors
     }
-    return INITIAL_STUDENTS;
+    return [];
   });
 
   const [haftarotMap, setHaftarotMap] = useState<Record<string, number>>(() => {
@@ -92,6 +87,7 @@ export default function App() {
 
   // Student share link state (?teacher=XXX&student=YYY)
   const [cloudStudent, setCloudStudent] = useState<StudentProfile | null>(null);
+  const [cloudStudentLibrary, setCloudStudentLibrary] = useState<Record<string, RecordingItem[]>>({});
   const [isLoadingStudent, setIsLoadingStudent] = useState<boolean>(
     Boolean(studentParam && teacherParam)
   );
@@ -104,7 +100,6 @@ export default function App() {
   const [regDisplayName, setRegDisplayName] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [seedDemoStudents, setSeedDemoStudents] = useState(true);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [showGoogleClientModal, setShowGoogleClientModal] = useState(false);
@@ -116,8 +111,18 @@ export default function App() {
   haftarotRef.current = haftarotMap;
   const settingsRef = useRef(teacherSettings);
   settingsRef.current = teacherSettings;
+  const libraryRef = useRef(parashaLibrary);
+  libraryRef.current = parashaLibrary;
   const sessionRef = useRef(teacherSession);
   sessionRef.current = teacherSession;
+
+  const applyTeacherData = useCallback((data: CloudAppData | null) => {
+    setStudents(data?.students ?? []);
+    setHaftarotMap({ ...INITIAL_HAFTAROT, ...data?.haftarotMap });
+    setTeacherSettings(data?.settings ?? {});
+    setParashaLibrary(data?.parashaLibrary ?? {});
+    setLastSyncedAt(data?.updatedAt ?? null);
+  }, []);
 
   // Save local cache whenever state changes
   useEffect(() => {
@@ -148,6 +153,7 @@ export default function App() {
           const res = await fetchR2StudentData(teacherParam, studentParam!);
           if (!cancelled && res.student) {
             setCloudStudent(res.student);
+            setCloudStudentLibrary(res.parashaLibrary);
             setIsLoadingStudent(false);
             return;
           }
@@ -196,23 +202,8 @@ export default function App() {
       try {
         const res = await fetchR2TeacherData(teacherSession!.teacher.teacherId);
         if (cancelled) return;
-        setR2Configured(res.r2Configured);
+        applyTeacherData(res.data);
         if (res.initialized && res.data) {
-          if (Array.isArray(res.data.students)) {
-            setStudents(res.data.students);
-          }
-          if (res.data.haftarotMap) {
-            setHaftarotMap({ ...INITIAL_HAFTAROT, ...res.data.haftarotMap });
-          }
-          if (res.data.settings) {
-            setTeacherSettings(res.data.settings);
-          }
-          if (res.data.parashaLibrary) {
-            setParashaLibrary(res.data.parashaLibrary);
-          }
-          if (res.data.updatedAt) {
-            setLastSyncedAt(res.data.updatedAt);
-          }
           setSyncStatus('saved');
         }
       } catch {
@@ -224,16 +215,16 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [teacherSession?.teacher?.teacherId, studentParam]);
+  }, [teacherSession?.teacher?.teacherId, studentParam, applyTeacherData]);
 
   // Sync teacher data to Cloudflare R2
   const syncToR2 = useCallback(
     async (
       nextStudents: StudentProfile[],
       nextHaftarot: Record<string, number>,
-      overrideSession?: TeacherSession | null
+      nextLibrary?: Record<string, RecordingItem[]>
     ) => {
-      const activeSession = overrideSession ?? sessionRef.current;
+      const activeSession = sessionRef.current;
       if (!activeSession?.teacher?.teacherId || !activeSession?.token) {
         setSyncStatus('unconfigured');
         return false;
@@ -248,14 +239,14 @@ export default function App() {
           students: nextStudents,
           haftarotMap: nextHaftarot,
           settings: settingsRef.current,
+          parashaLibrary: nextLibrary,
         });
         setSyncStatus('saved');
         setLastSyncedAt(result.updatedAt);
-        setR2Configured(result.r2Configured);
         return true;
       } catch (err: any) {
         setSyncStatus('error');
-        setSyncErrorMessage(err?.message || 'שגיאה בשמירה לענן R2');
+        setSyncErrorMessage(err?.message || 'שגיאה בשמירת הנתונים');
         return false;
       }
     },
@@ -311,6 +302,19 @@ export default function App() {
     syncToR2(studentsRef.current, haftarotRef.current);
   };
 
+  const handleAddLibraryItem = async (folder: string, item: RecordingItem): Promise<boolean> => {
+    const nextLibrary = {
+      ...libraryRef.current,
+      [folder]: [...(libraryRef.current[folder] ?? []).filter((existing) => existing.id !== item.id), item],
+    };
+    const saved = await syncToR2(studentsRef.current, haftarotRef.current, nextLibrary);
+    if (saved) {
+      libraryRef.current = nextLibrary;
+      setParashaLibrary(nextLibrary);
+    }
+    return saved;
+  };
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -322,20 +326,7 @@ export default function App() {
       });
       saveTeacherSession(result.session);
       setTeacherSession(result.session);
-      setR2Configured(result.r2Configured);
-      if (result.data) {
-        if (Array.isArray(result.data.students)) setStudents(result.data.students);
-        if (result.data.haftarotMap) {
-          setHaftarotMap({ ...INITIAL_HAFTAROT, ...result.data.haftarotMap });
-        }
-        if (result.data.settings) {
-          setTeacherSettings(result.data.settings);
-        }
-        if (result.data.parashaLibrary) {
-          setParashaLibrary(result.data.parashaLibrary);
-        }
-        if (result.data.updatedAt) setLastSyncedAt(result.data.updatedAt);
-      }
+      applyTeacherData(result.data);
       setSyncStatus('saved');
       setLoginPassword('');
     } catch (err: any) {
@@ -350,32 +341,19 @@ export default function App() {
     setAuthError(null);
     setAuthLoading(true);
     try {
-      const initialStudents = seedDemoStudents ? studentsRef.current : [];
       const result = await registerTeacherR2({
         username: regUsername,
         displayName: regDisplayName || regUsername,
         email: regEmail,
         password: regPassword,
         initialData: {
-          students: initialStudents,
-          haftarotMap: haftarotRef.current,
+          students: [],
+          haftarotMap: INITIAL_HAFTAROT,
         },
       });
       saveTeacherSession(result.session);
       setTeacherSession(result.session);
-      setR2Configured(result.r2Configured);
-      if (result.data) {
-        setStudents(result.data.students || []);
-        if (result.data.haftarotMap) {
-          setHaftarotMap({ ...INITIAL_HAFTAROT, ...result.data.haftarotMap });
-        }
-        if (result.data.settings) {
-          setTeacherSettings(result.data.settings);
-        }
-        if (result.data.updatedAt) setLastSyncedAt(result.data.updatedAt);
-      } else {
-        setStudents(initialStudents);
-      }
+      applyTeacherData(result.data);
       setSyncStatus('saved');
       setRegPassword('');
     } catch (err: any) {
@@ -398,23 +376,13 @@ export default function App() {
         accessToken,
         preferredUsername: regUsername || undefined,
         initialData: {
-          students: seedDemoStudents ? studentsRef.current : [],
-          haftarotMap: haftarotRef.current,
+          students: [],
+          haftarotMap: INITIAL_HAFTAROT,
         },
       });
       saveTeacherSession(result.session);
       setTeacherSession(result.session);
-      setR2Configured(result.r2Configured);
-      if (result.data && Array.isArray(result.data.students)) {
-        setStudents(result.data.students);
-        if (result.data.haftarotMap) {
-          setHaftarotMap({ ...INITIAL_HAFTAROT, ...result.data.haftarotMap });
-        }
-        if (result.data.settings) {
-          setTeacherSettings(result.data.settings);
-        }
-        if (result.data.updatedAt) setLastSyncedAt(result.data.updatedAt);
-      }
+      applyTeacherData(result.data);
       setSyncStatus('saved');
     } catch (err: any) {
       if (err?.message === 'MISSING_GOOGLE_CLIENT_ID') {
@@ -430,6 +398,7 @@ export default function App() {
   const handleLogout = () => {
     saveTeacherSession(null);
     setTeacherSession(null);
+    applyTeacherData(null);
     setSyncStatus('unconfigured');
     setPreviewStudent(null);
   };
@@ -488,6 +457,7 @@ export default function App() {
     return (
       <StudentView
         student={livePreviewStudent}
+        parashaLibrary={parashaLibrary}
         isTeacherPreview
         onExitPreview={() => setPreviewStudent(null)}
       />
@@ -511,7 +481,7 @@ export default function App() {
     if (activeStudentFromUrl) {
       return (
         <div className="relative">
-          <StudentView student={activeStudentFromUrl} />
+          <StudentView student={activeStudentFromUrl} parashaLibrary={cloudStudentLibrary} />
           <div className="fixed top-3 left-3 z-30">
             <button
               type="button"
@@ -536,10 +506,10 @@ export default function App() {
         teacherId={teacherSession.teacher.teacherId}
         teacherDisplayName={teacherSession.teacher.displayName}
         teacherToken={teacherSession.token}
-        r2Configured={r2Configured}
         students={students}
         haftarotMap={haftarotMap}
         parashaLibrary={parashaLibrary}
+        onAddLibraryItem={handleAddLibraryItem}
         defaultHaftarahTradition={teacherSettings.defaultHaftarahTradition ?? 'ashkenazi'}
         onSetDefaultHaftarahTradition={handleSetDefaultHaftarahTradition}
         syncStatus={syncStatus}
@@ -570,11 +540,7 @@ export default function App() {
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">
             מערכת מורים – קריאה בתורה והפטרה
-          </h1>
-          <p className="text-xs text-slate-400 mt-1 flex items-center justify-center gap-1.5">
-            <Cloud className="w-3.5 h-3.5 text-indigo-400" />
-            <span>ניהול תלמידים והקלטות בענן Cloudflare R2</span>
-          </p>
+          </h1>          
         </div>
 
         <div className="bg-white/5 border border-white/10 rounded-3xl p-6 shadow-2xl backdrop-blur-xs">
@@ -726,16 +692,6 @@ export default function App() {
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer pt-1">
-                <input
-                  type="checkbox"
-                  checked={seedDemoStudents}
-                  onChange={(e) => setSeedDemoStudents(e.target.checked)}
-                  className="rounded border-white/20"
-                />
-                <span>ייבא את רשימת התלמידים הקיימת במכשיר לחשבון זה</span>
-              </label>
-
               {authError && (
                 <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-xs text-rose-300 font-semibold">
                   {authError}
@@ -752,7 +708,7 @@ export default function App() {
                 ) : (
                   <UserPlus className="w-4 h-4" />
                 )}
-                <span>צור חשבון מורה ושמור ב-R2</span>
+                <span>צור חשבון מורה</span>
               </button>
             </form>
           )}

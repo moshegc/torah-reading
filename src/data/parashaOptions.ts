@@ -1,4 +1,4 @@
-import { PARASHA_META_LIST } from './driveCatalog';
+import { PARASHA_META_LIST } from './torahReference';
 import { VERSE_READINGS, VerseReadingData } from './verseCounts';
 
 /** An entry of the "parasha" drop-down: a single parasha or a joint (doubled) parasha. */
@@ -90,9 +90,19 @@ export function findParashaOption(name?: string | null): ParashaOption | undefin
   return optionByName.get(parts.join('-'));
 }
 
+/** Orders haftarot by parasha, keeping special/custom entries at the end in their existing order. */
+export function sortHaftarahNames(names: readonly string[]): string[] {
+  const order = (name: string): number => {
+    const option = findParashaOption(name) ?? findParashaOption(name.trim().replace(/\s+[אס]$/, ''));
+    return option
+      ? Math.max(...option.order) * 2 + (option.kind === 'joint' ? 1 : 0)
+      : Number.MAX_SAFE_INTEGER;
+  };
+  return [...names].sort((a, b) => order(a) - order(b));
+}
+
 /** The verse data (aliyot, maftir, weekday, haftarah...) of the selected parasha. */
 export function getParashaVerseReading(name?: string | null): VerseReadingData | undefined {
   const option = findParashaOption(name);
   return option ? VERSE_READINGS.find((r) => r.id === option.readingId) : undefined;
 }
-

@@ -1,5 +1,5 @@
 import { HDate, Sedra, months, parshiot } from '@hebcal/core';
-import { PARASHA_META_LIST } from '../data/driveCatalog';
+import { PARASHA_META_LIST } from '../data/torahReference';
 
 export interface BarMitzvaInfo {
   /** Hebrew date of birth used for the calculation */

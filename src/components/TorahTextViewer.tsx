@@ -17,7 +17,7 @@ import {
   ListOrdered,
   RefreshCw,
 } from 'lucide-react';
-import { RecordingItem } from '../data/driveCatalog';
+import type { RecordingItem } from '../types';
 import {
   TextDisplayMode,
   TextFontSize,

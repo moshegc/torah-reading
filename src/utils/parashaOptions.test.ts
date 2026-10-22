@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PARASHA_META_LIST } from '../data/driveCatalog';
-import { PARASHA_OPTIONS, findParashaOption, getParashaVerseReading } from '../data/parashaOptions';
+import { PARASHA_META_LIST } from '../data/torahReference';
+import { PARASHA_OPTIONS, findParashaOption, getParashaVerseReading, sortHaftarahNames } from '../data/parashaOptions';
 import { findParashaRefs } from './sefariaApi';
 import { getJointParashaSefariaRefs } from './jointParashaRefs';
 import { lookupParashaVerses } from './trackerCalculations';
@@ -42,6 +42,28 @@ describe('PARASHA_OPTIONS', () => {
   });
 });
 
+describe('haftarah ordering', () => {
+  it('follows the parasha list regardless of insertion order', () => {
+    const names = PARASHA_OPTIONS.map((option) => option.name);
+    expect(sortHaftarahNames([...names].reverse())).toEqual(names);
+  });
+
+  it('places tradition variants and spelling aliases alongside their parasha', () => {
+    expect(sortHaftarahNames(['וארא', 'שמות א', 'בחוקתי', 'שמות ס', 'ויחי', 'בהר'])).toEqual([
+      'ויחי', 'שמות א', 'שמות ס', 'וארא', 'בהר', 'בחוקתי',
+    ]);
+  });
+
+  it('keeps special and custom haftarot at the end without mutating the input', () => {
+    const names = ['מחר חודש', 'עקב', 'הפטרה אישית', 'בראשית', 'שובה'];
+    expect(sortHaftarahNames(names)).toEqual([
+      'בראשית', 'עקב', 'מחר חודש', 'הפטרה אישית', 'שובה',
+    ]);
+    expect(names).toEqual(['מחר חודש', 'עקב', 'הפטרה אישית', 'בראשית', 'שובה']);
+    expect(sortHaftarahNames([])).toEqual([]);
+  });
+});
+
 describe('joint parasha integration', () => {
   it('looks up the verse count of a joint parasha', () => {
     expect(lookupParashaVerses('ויקהל-פקודי')).toBe(214);
@@ -67,4 +89,3 @@ describe('joint parasha integration', () => {
     expect(getJointParashaSefariaRefs('ויקהל')).toBeNull();
   });
 });
-

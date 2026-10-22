@@ -1,9 +1,20 @@
-import { StudentProfile, RecordingItem, DEFAULT_GAS_WEBAPP_URL } from '../data/driveCatalog';
+import type { StudentProfile, RecordingItem } from '../types';
+
+const DEFAULT_GAS_WEBAPP_URL =
+  (import.meta as any).env?.VITE_GAS_WEBAPP_URL || '';
 import { classifyFileTitle } from './trackerCalculations';
 import type { HaftarahTradition } from './readingPlan';
 
 export const STORAGE_KEY_GAS_URL = 'torah_trainer_gas_webapp_url';
 export const STORAGE_KEY_TEACHER_SESSION = 'torah_trainer_r2_teacher_session_v1';
+
+function cloudRequestError(message: unknown, fallback: string): Error {
+  if (typeof message === 'string' && /r2|cloudflare/i.test(message)) {
+    console.error('Storage request failed:', message);
+    return new Error(fallback);
+  }
+  return new Error(typeof message === 'string' && message ? message : fallback);
+}
 
 export interface TeacherProfile {
   teacherId: string;
@@ -76,7 +87,7 @@ export async function registerTeacherR2(params: {
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || 'שגיאה ביצירת חשבון מורה');
+    throw cloudRequestError(json.error, 'שגיאה ביצירת חשבון מורה');
   }
   return {
     session: { teacher: json.teacher, token: json.token },
@@ -103,7 +114,7 @@ export async function loginTeacherR2(params: {
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || 'שם משתמש או סיסמה שגויים');
+    throw cloudRequestError(json.error, 'שם משתמש או סיסמה שגויים');
   }
   return {
     session: { teacher: json.teacher, token: json.token },
@@ -132,7 +143,7 @@ export async function googleAuthTeacherR2(params: {
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || 'התחברות באמצעות Google נכשלה');
+    throw cloudRequestError(json.error, 'התחברות באמצעות Google נכשלה');
   }
   return {
     session: { teacher: json.teacher, token: json.token },
@@ -154,7 +165,7 @@ export async function fetchR2TeacherData(teacherId: string): Promise<{
   }
   const json = await res.json();
   if (!json.ok) {
-    throw new Error(json.error || 'Failed to load teacher data from R2');
+    throw cloudRequestError(json.error, 'שגיאה בטעינת נתוני המורה');
   }
   return {
     initialized: Boolean(json.initialized),
@@ -168,6 +179,7 @@ export async function fetchR2StudentData(
   studentId: string
 ): Promise<{
   student: StudentProfile | null;
+  parashaLibrary: Record<string, RecordingItem[]>;
   updatedAt: string | null;
 }> {
   const res = await fetch(
@@ -180,10 +192,11 @@ export async function fetchR2StudentData(
   }
   const json = await res.json();
   if (!json.ok) {
-    throw new Error(json.error || 'Failed to load student data from R2');
+    throw cloudRequestError(json.error, 'שגיאה בטעינת נתוני התלמיד');
   }
   return {
     student: json.student || null,
+    parashaLibrary: json.parashaLibrary || {},
     updatedAt: json.updatedAt || null,
   };
 }
@@ -194,6 +207,7 @@ export async function saveR2TeacherData(params: {
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
   settings?: TeacherSettings;
+  parashaLibrary?: Record<string, RecordingItem[]>;
 }): Promise<{ updatedAt: string; storage: string; r2Configured: boolean }> {
   const res = await fetch('/api/r2-data', {
     method: 'POST',
@@ -207,11 +221,12 @@ export async function saveR2TeacherData(params: {
       students: params.students,
       haftarotMap: params.haftarotMap,
       settings: params.settings,
+      parashaLibrary: params.parashaLibrary,
     }),
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || 'שגיאה בשמירת הנתונים לענן R2');
+    throw cloudRequestError(json.error, 'שגיאה בשמירת הנתונים');
   }
   return {
     updatedAt: json.updatedAt || new Date().toISOString(),
@@ -246,7 +261,7 @@ export async function uploadLocalFileToR2(params: {
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || 'העלאת הקובץ לענן R2 נכשלה');
+    throw cloudRequestError(json.error, 'העלאת הקובץ נכשלה');
   }
   return {
     id: json.id,
@@ -280,7 +295,7 @@ export async function transferDriveFilesToR2(params: {
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
-    throw new Error(json.error || 'שגיאה בהעברת קבצים מ-Google Drive אל ענן R2');
+    throw cloudRequestError(json.error, 'שגיאה בייבוא קבצים מ-Google Drive');
   }
 
   const items = Array.isArray(json.items) ? json.items : [];

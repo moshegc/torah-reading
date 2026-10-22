@@ -167,7 +167,7 @@ export async function pickFilesFromGoogleDrive(options?: {
         .addView(docsView)
         .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
         .setOAuthToken(oauthToken)
-        .setTitle('בחר קבצי הקלטה או תיקייה מ-Google Drive להעברה לענן R2')
+        .setTitle('בחר קבצי הקלטה או תיקייה מ-Google Drive לייבוא')
         .setLocale('he')
         .setCallback((data: any) => {
           if (data[google.picker.Response.ACTION] === google.picker.Action.PICKED) {

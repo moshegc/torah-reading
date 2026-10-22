@@ -12,7 +12,7 @@ import {
   Plus,
   BookOpen,
 } from 'lucide-react';
-import { RecordingItem } from '../data/driveCatalog';
+import type { RecordingItem } from '../types';
 import { getMediaStreamUrl } from '../utils/trackerCalculations';
 import {
   loadStudentPreferences,

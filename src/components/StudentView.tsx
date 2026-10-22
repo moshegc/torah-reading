@@ -16,12 +16,7 @@ import {
   Minus,
   Plus,
 } from 'lucide-react';
-import {
-  StudentProfile,
-  RecordingItem,
-  GENERAL_AUDIO_ITEMS,
-  GENERAL_DOC_ITEMS,
-} from '../data/driveCatalog';
+import type { StudentProfile, RecordingItem } from '../types';
 import {
   calculateStudentStats,
   formatDateIL,
@@ -37,6 +32,7 @@ import { TorahTextViewer } from './TorahTextViewer';
 
 interface StudentViewProps {
   student: StudentProfile;
+  parashaLibrary?: Record<string, RecordingItem[]>;
   isTeacherPreview?: boolean;
   onExitPreview?: () => void;
 }
@@ -45,6 +41,7 @@ type StudentTab = 'torah' | 'haftarah' | 'general';
 
 export const StudentView: React.FC<StudentViewProps> = ({
   student,
+  parashaLibrary = {},
   isTeacherPreview = false,
   onExitPreview,
 }) => {
@@ -100,10 +97,14 @@ export const StudentView: React.FC<StudentViewProps> = ({
     [visiblePortions]
   );
 
-  const haftarahBlessings = useMemo(
-    () => GENERAL_AUDIO_ITEMS.filter((r) => r.title.includes('הפטרה')),
-    []
+  const generalMaterials = useMemo(
+    () => [...(parashaLibrary['כללי'] ?? []), ...(parashaLibrary['תמונות'] ?? [])]
+      .filter((item) => item.visible !== false),
+    [parashaLibrary]
   );
+  const generalAudio = generalMaterials.filter((item) => item.category !== 'doc');
+  const generalDocs = generalMaterials.filter((item) => item.category === 'doc');
+  const haftarahBlessings = generalAudio.filter((item) => item.title.includes('הפטרה'));
 
   return (
     <div className="min-h-screen bg-slate-50 pb-40" dir="rtl">
@@ -448,7 +449,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                   {parashaDocs.map((doc) => (
                     <a
                       key={doc.id}
-                      href={doc.localUrl || doc.viewUrl}
+                      href={getMediaStreamUrl(doc)}
                       target="_blank"
                       rel="noreferrer"
                       className="w-full text-right p-3.5 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 flex items-center justify-between gap-3"
@@ -692,7 +693,10 @@ export const StudentView: React.FC<StudentViewProps> = ({
                 הקלטות טעמי המקרא וברכות
               </h2>
               <div className="space-y-2.5">
-                {GENERAL_AUDIO_ITEMS.map((rec) => {
+                {generalAudio.length === 0 && (
+                  <p className="px-1 text-sm text-slate-500">לא נוספו הקלטות כלליות.</p>
+                )}
+                {generalAudio.map((rec) => {
                   const isSelected = selectedRecording?.id === rec.id;
                   return (
                     <button
@@ -744,9 +748,12 @@ export const StudentView: React.FC<StudentViewProps> = ({
                 דפי עזר, תווים וכללי דקדוק
               </h2>
               <div className="space-y-2.5">
-                {GENERAL_DOC_ITEMS.map((doc) => {
+                {generalDocs.length === 0 && (
+                  <p className="px-1 text-sm text-slate-500">לא נוספו דפי עזר.</p>
+                )}
+                {generalDocs.map((doc) => {
                   const isPdf = doc.ext === 'pdf';
-                  const directHref = doc.localUrl || doc.viewUrl;
+                  const directHref = getMediaStreamUrl(doc);
                   return (
                     <div
                       key={doc.id}
@@ -801,7 +808,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                           target="_blank"
                           rel="noreferrer"
                           className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
-                          title="פתח ב-Google Drive"
+                          title="פתח קובץ מקור"
                         >
                           <ExternalLink className="w-4 h-4" />
                         </a>
@@ -825,7 +832,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               </div>
               <div className="flex items-center gap-2">
                 <a
-                  href={previewDoc.localUrl || previewDoc.viewUrl}
+                  href={getMediaStreamUrl(previewDoc)}
                   target="_blank"
                   rel="noreferrer"
                   className="text-xs font-semibold text-indigo-600 hover:underline flex items-center gap-1 px-2 py-1"
@@ -839,7 +846,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                   rel="noreferrer"
                   className="text-xs font-semibold text-slate-500 hover:underline flex items-center gap-1 px-2 py-1"
                 >
-                  <span>Drive</span>
+                  <span>קובץ מקור</span>
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
                 <button
@@ -855,7 +862,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
             <div className="flex-1 overflow-auto bg-slate-100 p-2 flex items-center justify-center min-h-[60vh]">
               {previewDoc.ext === 'pdf' ? (
                 <iframe
-                  src={previewDoc.localUrl || previewDoc.viewUrl}
+                  src={getMediaStreamUrl(previewDoc)}
                   title={previewDoc.aliyah}
                   className="w-full h-[72vh] rounded-xl border-0 bg-white"
                 />

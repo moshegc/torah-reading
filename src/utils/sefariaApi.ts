@@ -1,5 +1,5 @@
 import { PARASHA_SEFARIA_REFS, ParashaSefariaRefs } from '../data/sefariaParashaRefs';
-import { RecordingItem } from '../data/driveCatalog';
+import type { RecordingItem } from '../types';
 import { getJointParashaSefariaRefs } from './jointParashaRefs';
 
 export type TextDisplayMode = 'full' | 'no_nikud' | 'tikkun' | 'nikud_only';

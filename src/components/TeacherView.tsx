@@ -30,15 +30,12 @@ import {
   LogOut,
   HardDrive,
 } from 'lucide-react';
-import {
-  StudentProfile,
-  RecordingItem,
-  PARASHA_META_LIST,
-  ROOT_DRIVE_FOLDER_URL,
-  STUDENT_TRACKER_SHEET_URL,
-} from '../data/driveCatalog';
-import { PARASHA_OPTIONS } from '../data/parashaOptions';
+import type { StudentProfile, RecordingItem } from '../types';
+import { PARASHA_META_LIST } from '../data/torahReference';
+import { PARASHA_OPTIONS, sortHaftarahNames } from '../data/parashaOptions';
 import { ReadingPlanPicker } from './ReadingPlanPicker';
+import { DateInput } from './DateInput';
+import { TeacherLibraryUpload } from './TeacherLibraryUpload';
 import {
   EMPTY_READING_PLAN,
   computePlanVerses,
@@ -74,10 +71,10 @@ interface TeacherViewProps {
   teacherId: string;
   teacherDisplayName?: string;
   teacherToken: string;
-  r2Configured?: boolean;
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
   parashaLibrary?: Record<string, RecordingItem[]>;
+  onAddLibraryItem: (folder: string, item: RecordingItem) => Promise<boolean>;
   defaultHaftarahTradition?: HaftarahTradition;
   onSetDefaultHaftarahTradition?: (tradition: HaftarahTradition) => void;
   syncStatus: DriveSyncStatus;
@@ -124,10 +121,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   teacherId,
   teacherDisplayName,
   teacherToken,
-  r2Configured,
   students,
   haftarotMap,
   parashaLibrary = {},
+  onAddLibraryItem,
   defaultHaftarahTradition = 'ashkenazi',
   onSetDefaultHaftarahTradition,
   syncStatus,
@@ -142,12 +139,18 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   onDeleteStudent,
   onPreviewStudent,
 }) => {
+  const haftarahNames = useMemo(() => sortHaftarahNames(Object.keys(haftarotMap)), [haftarotMap]);
+  const haftarahSuggestions = useMemo(
+    () => sortHaftarahNames([...new Set([...haftarahNames, ...SPECIAL_HAFTAROT])]),
+    [haftarahNames]
+  );
   const [viewMode, setViewMode] = useState<'cards' | 'table' | 'gantt'>('cards');
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [managingStudentId, setManagingStudentId] = useState<string | null>(null);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showHaftarotModal, setShowHaftarotModal] = useState(false);
   const [showDriveSyncModal, setShowDriveSyncModal] = useState(false);
+  const [showLibraryUpload, setShowLibraryUpload] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [previewRecording, setPreviewRecording] = useState<RecordingItem | null>(null);
 
@@ -336,11 +339,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           portions: merged,
         });
         setFolderLoadMsg(
-          `הועברו ${items.length} קבצים מ-Google Drive אל ענן R2 בהצלחה! סמן למטה אילו מהם יהיו גלויים לתלמיד.`
+          `נשמרו ${items.length} קבצים מ-Google Drive בהצלחה! סמן למטה אילו מהם יהיו גלויים לתלמיד.`
         );
       }
     } catch (err: any) {
-      setFolderLoadMsg(err?.message || 'שגיאה בהעברת התיקייה ל-R2');
+      setFolderLoadMsg(err?.message || 'שגיאה בייבוא התיקייה');
     } finally {
       setIsLoadingFolder(false);
     }
@@ -402,7 +405,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           portions: merged,
         });
         setFolderLoadMsg(
-          `הועברו ${allTransferred.length} קבצים מ-Google Drive אל ענן R2 בהצלחה!`
+          `נשמרו ${allTransferred.length} קבצים מ-Google Drive בהצלחה!`
         );
       }
     } catch (err: any) {
@@ -494,12 +497,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           setSingleLinkInput('');
           setLocalDataUrl(undefined);
           setLocalFileName('');
-          setFolderLoadMsg('הקובץ הועבר מ-Google Drive אל ענן R2 בהצלחה!');
+          setFolderLoadMsg('הקובץ נשמר בהצלחה!');
           return;
         }
       }
     } catch (err: any) {
-      setFolderLoadMsg(err?.message || 'שגיאה בהעלאת הקובץ לענן R2');
+      setFolderLoadMsg(err?.message || 'שגיאה בהעלאת הקובץ');
     } finally {
       setIsUploadingAudio(false);
     }
@@ -674,12 +677,20 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                מעקב פסוקים, תאריכי התחלה, תרשים גאנט שבועי וניהול הקלטות בענן R2 לכל תלמיד
+                מעקב פסוקים, תאריכי התחלה, תרשים גאנט שבועי וניהול הקלטות לכל תלמיד
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowLibraryUpload(true)}
+              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5"
+            >
+              <CloudUpload className="w-4 h-4" />
+              <span>העלאת חומרי לימוד</span>
+            </button>
             {/* Cloudflare R2 Cloud Save Status / Settings */}
             <button
               type="button"
@@ -696,27 +707,27 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   ? 'bg-rose-950 border-rose-700 text-rose-300 hover:bg-rose-900'
                   : 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
               }`}
-              title="סטטוס שמירה בענן Cloudflare R2 והגדרות Google Picker"
+              title="סטטוס שמירה והגדרות Google Picker"
             >
               {syncStatus === 'saving' ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                  <span>שומר ב-R2...</span>
+                  <span>שומר...</span>
                 </>
               ) : syncStatus === 'saved' ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  <span>נשמר בענן R2</span>
+                  <span>נשמר</span>
                 </>
               ) : syncStatus === 'error' ? (
                 <>
                   <AlertTriangle className="w-4 h-4 text-rose-400" />
-                  <span>שגיאת סנכרון R2</span>
+                  <span>שגיאה בשמירה</span>
                 </>
               ) : (
                 <>
                   <Cloud className="w-4 h-4 text-indigo-300" />
-                  <span>ענן R2</span>
+                  <span>שמירה</span>
                 </>
               )}
             </button>
@@ -808,26 +819,6 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
-          <a
-            href={ROOT_DRIVE_FOLDER_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 hover:border-indigo-300 font-semibold flex items-center gap-1"
-          >
-            <span>תיקיית Drive ראשית</span>
-            <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-          </a>
-          <a
-            href={STUDENT_TRACKER_SHEET_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 hover:border-indigo-300 font-semibold flex items-center gap-1"
-          >
-            <span>גיליון מעקב ב-Sheets</span>
-            <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-          </a>
-        </div>
       </div>
 
       {/* Main Content */}
@@ -1185,13 +1176,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                             <label className="block text-[11px] text-slate-500 mb-0.5">
                               תאריך בר מצווה
                             </label>
-                            <input
-                              type="date"
+                            <DateInput
+                              required
                               value={student.barMitzvahDate}
-                              onChange={(e) =>
-                                onUpdateStudent({
+                              onChange={(value) =>
+                                value && onUpdateStudent({
                                   ...student,
-                                  barMitzvahDate: e.target.value,
+                                  barMitzvahDate: value,
                                 })
                               }
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs"
@@ -1644,10 +1635,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
               <div>
                 <h3 className="font-extrabold text-lg">
-                  ניהול הקלטות בענן R2 – {managingStudent.name} (פרשת {managingStudent.parasha})
+                  ניהול הקלטות – {managingStudent.name} (פרשת {managingStudent.parasha})
                 </h3>
                 <p className="text-xs text-slate-300">
-                  העבר הקלטות מ-Google Drive שלך או העלה מהמכשיר ישירות לענן R2
+                  ייבא הקלטות מ-Google Drive שלך או העלה מהמכשיר
                 </p>
               </div>
               <button
@@ -1665,7 +1656,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <FolderPlus className="w-4 h-4 text-indigo-600" />
-                    <span>העברת הקלטות מ-Google Drive או ממאגר ה-R2 שלך:</span>
+                    <span>ייבוא הקלטות מ-Google Drive או ממאגר ההקלטות שלך:</span>
                   </label>
 
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -1692,14 +1683,14 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                               portions: merged,
                             });
                             setFolderLoadMsg(
-                              `נטענו ${libItems.length} הקלטות של פרשת ${managingStudent.parasha} ישירות ממאגר ה-R2 שלך!`
+                              `נטענו ${libItems.length} הקלטות של פרשת ${managingStudent.parasha} ממאגר ההקלטות שלך!`
                             );
                           }}
                           className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition"
                         >
                           <Cloud className="w-3.5 h-3.5" />
                           <span>
-                            טען ממאגר ה-R2 (פרשת {managingStudent.parasha} – {libItems.length})
+                            טען ממאגר ההקלטות (פרשת {managingStudent.parasha} – {libItems.length})
                           </span>
                         </button>
                       );
@@ -1788,7 +1779,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     ) : (
                       <CloudUpload className="w-3.5 h-3.5" />
                     )}
-                    <span>ייבא תיקייה ל-R2</span>
+                    <span>ייבא תיקייה</span>
                   </button>
                 </div>
                 {folderLoadMsg && (
@@ -1806,7 +1797,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                   <LinkIcon className="w-4 h-4 text-emerald-600" />
                   <span>
-                    או הוסף הקלטה בודדת לענן R2 (קישור לקובץ ב-Drive או העלאת קובץ מהמכשיר):
+                    או הוסף הקלטה בודדת (קישור לקובץ ב-Drive או העלאת קובץ מהמכשיר):
                   </span>
                 </div>
 
@@ -1862,7 +1853,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     type="text"
                     value={singleLinkInput}
                     onChange={(e) => setSingleLinkInput(e.target.value)}
-                    placeholder="הדבק קישור לקובץ ב-Google Drive להעברה ל-R2..."
+                    placeholder="הדבק קישור לקובץ ב-Google Drive..."
                     className="flex-1 min-w-[200px] bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs"
                     dir="ltr"
                   />
@@ -1883,12 +1874,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     {isUploadingAudio ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>מעלה ל-R2...</span>
+                        <span>מעלה...</span>
                       </>
                     ) : (
                       <>
                         <Plus className="w-3.5 h-3.5" />
-                        <span>העלה ל-R2</span>
+                        <span>העלה קובץ</span>
                       </>
                     )}
                   </button>
@@ -2112,10 +2103,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
                 {dobMode === 'gregorian' ? (
                   <div className="flex items-center gap-2">
-                    <input
-                      type="date"
+                    <DateInput
                       value={dobGregorian}
-                      onChange={(e) => setDobGregorian(e.target.value)}
+                      onChange={setDobGregorian}
                       className="border border-slate-300 rounded-xl px-3 py-1.5 text-sm"
                     />
                     <label className="flex items-center gap-1 text-[11px] text-slate-600">
@@ -2224,10 +2214,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />
                   <datalist id="haftarot-options">
-                    {Object.keys(haftarotMap).map((h) => (
-                      <option key={h} value={h} />
-                    ))}
-                    {SPECIAL_HAFTAROT.filter((h) => !(h in haftarotMap)).map((h) => (
+                    {haftarahSuggestions.map((h) => (
                       <option key={h} value={h} />
                     ))}
                   </datalist>
@@ -2252,11 +2239,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     תאריך בר מצווה
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     required
                     value={newBarMitzvahDate}
-                    onChange={(e) => setNewBarMitzvahDate(e.target.value)}
+                    onChange={setNewBarMitzvahDate}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />
                 </div>
@@ -2395,11 +2381,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     className="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-semibold"
                   />
                   <datalist id="all-parashot-haftarot">
-                    {PARASHA_META_LIST.map((pm) => (
-                      <option key={pm.name} value={pm.name} />
-                    ))}
-                    {SPECIAL_HAFTAROT.map((sh) => (
-                      <option key={sh} value={sh} />
+                    {sortHaftarahNames([...PARASHA_META_LIST.map((pm) => pm.name), ...SPECIAL_HAFTAROT]).map((name) => (
+                      <option key={name} value={name} />
                     ))}
                   </datalist>
                 </div>
@@ -2431,7 +2414,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
               {/* Existing Haftarot List */}
               <div className="divide-y divide-slate-200 border border-slate-200 rounded-2xl overflow-hidden">
-                {Object.entries(haftarotMap).map(([name, verses]) => (
+                {haftarahNames.map((name) => (
                   <div
                     key={name}
                     className="px-4 py-2.5 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 text-xs"
@@ -2441,7 +2424,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       <input
                         type="number"
                         min={0}
-                        value={verses}
+                        value={haftarotMap[name]}
                         onChange={(e) =>
                           onSetHaftarahLength(
                             name,
@@ -2478,6 +2461,16 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
         </div>
       )}
 
+      {showLibraryUpload && (
+        <TeacherLibraryUpload
+          teacherId={teacherId}
+          teacherToken={teacherToken}
+          folders={Object.keys(parashaLibrary)}
+          onSave={onAddLibraryItem}
+          onClose={() => setShowLibraryUpload(false)}
+        />
+      )}
+
       {/* MODAL 4: CLOUDFLARE R2 SYNC STATUS & GOOGLE PICKER SETTINGS */}
       {showDriveSyncModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
@@ -2487,10 +2480,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 <CloudUpload className="w-5 h-5 text-indigo-400" />
                 <div>
                   <h3 className="font-extrabold text-lg">
-                    אחסון וסנכרון בענן Cloudflare R2
+                    שמירה והגדרות
                   </h3>
                   <p className="text-xs text-slate-300">
-                    כל נתוני התלמידים וההקלטות של המורה <code className="text-indigo-300">{teacherId}</code> נשמרים ב-Cloudflare R2
+                    נתוני התלמידים וההקלטות נשמרים אוטומטית
                   </p>
                 </div>
               </div>
@@ -2506,7 +2499,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             <div className="p-5 overflow-y-auto space-y-4 flex-1 text-xs text-slate-700">
               <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-4 space-y-2">
                 <div className="font-extrabold text-indigo-950 text-sm mb-1">
-                  פרטי אחסון המורה בענן R2:
+                  פרטי המורה וקישורי תלמידים:
                 </div>
                 <div className="space-y-1 text-slate-700">
                   <div>
@@ -2516,34 +2509,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     </code>
                   </div>
                   <div>
-                    <strong>קובץ נתונים ב-R2:</strong>{' '}
-                    <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono">
-                      teachers/{teacherId}/data.json
-                    </code>
-                  </div>
-                  <div>
-                    <strong>תיקיית הקלטות ב-R2:</strong>{' '}
-                    <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono">
-                      media/{teacherId}/&lt;studentId&gt;/...
-                    </code>
-                  </div>
-                  <div>
                     <strong>תבנית קישור לתלמיד:</strong>{' '}
                     <code className="bg-white px-2 py-0.5 rounded border border-indigo-200 font-mono" dir="ltr">
                       ?teacher={teacherId}&amp;student=&lt;studentId&gt;
                     </code>
-                  </div>
-                  <div>
-                    <strong>מצב חיבור שרת R2:</strong>{' '}
-                    {r2Configured ? (
-                      <span className="text-emerald-700 font-bold">
-                        מחובר ל-Cloudflare R2 פעיל
-                      </span>
-                    ) : (
-                      <span className="text-amber-700 font-bold">
-                        מצב פיתוח מקומי (.r2-local) – הגדר משתני סביבה R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME ב-Vercel/סביבה לחיבור ענן R2
-                      </span>
-                    )}
                   </div>
                 </div>
               </div>
@@ -2603,8 +2572,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
               {lastSyncedAt && (
                 <div className="text-[11px] text-slate-500">
-                  סנכרון אחרון ל-R2:{' '}
-                  <strong>{new Date(lastSyncedAt).toLocaleString('he-IL')}</strong>
+                  נשמר לאחרונה:{' '}
+                  <strong dir="ltr">
+                    {formatDateIL(new Date(lastSyncedAt))}{' '}
+                    {new Date(lastSyncedAt).toLocaleTimeString('he-IL')}
+                  </strong>
                 </div>
               )}
             </div>
@@ -2619,15 +2591,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   setIsTestingSync(false);
                   setSyncTestMessage(
                     ok
-                      ? 'הנתונים נשמרו בענן R2 בהצלחה!'
-                      : 'שגיאה בשמירה לענן R2 – בדוק את הגדרות החיבור.'
+                      ? 'הנתונים נשמרו בהצלחה!'
+                      : 'שגיאה בשמירת הנתונים – נסה שוב.'
                   );
                 }}
                 disabled={isTestingSync}
                 className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 text-slate-700 font-bold text-xs flex items-center gap-1.5 hover:bg-slate-100"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isTestingSync ? 'animate-spin' : ''}`} />
-                <span>סנכרן עכשיו ל-R2</span>
+                <span>שמור עכשיו</span>
               </button>
 
               <div className="flex items-center gap-2 mr-auto">

@@ -1,10 +1,5 @@
-import {
-  StudentProfile,
-  StudentComputedStats,
-  PARASHA_META_LIST,
-  HAFTAROT_VERSE_COUNTS,
-  RecordingItem,
-} from '../data/driveCatalog';
+import type { StudentProfile, StudentComputedStats, RecordingItem } from '../types';
+import { PARASHA_META_LIST, HAFTAROT_VERSE_COUNTS } from '../data/torahReference';
 import { findParashaOption } from '../data/parashaOptions';
 
 /**
@@ -51,10 +46,10 @@ export function parseFlexibleDate(raw: string): Date | null {
     const p2 = Number(slash[2]);
     let y = Number(slash[3]);
     if (y < 100) y += 2000;
-    if (p1 > 12) {
-      return new Date(y, p2 - 1, p1);
-    }
-    return new Date(y, p1 - 1, p2);
+    const date = new Date(y, p2 - 1, p1);
+    return date.getFullYear() === y && date.getMonth() === p2 - 1 && date.getDate() === p1
+      ? date
+      : null;
   }
   const d = new Date(trimmed);
   return isNaN(d.getTime()) ? null : d;
