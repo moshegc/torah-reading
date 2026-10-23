@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   BookOpen,
   ScrollText,
@@ -24,6 +24,7 @@ import { AboutLink } from './AboutPage';
 import { ModalOverlay } from './ModalOverlay';
 import { TorahTextViewer } from './TorahTextViewer';
 import { getRecordingSection, isDocument, sortRecordings } from '../utils/recordings';
+import { inferPortionKeyFromRecording, PORTION_SELECTOR_OPTIONS, type PortionSelectorKey } from '../utils/sefariaApi';
 
 interface StudentViewProps {
   student: StudentProfile;
@@ -59,14 +60,21 @@ export const StudentView: React.FC<StudentViewProps> = ({
   isTeacherPreview = false,
   onExitPreview,
 }) => {
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [student.id]);
+
   const [activeTab, setActiveTab] = useState<StudentTab>('torah');
   const [selectedRecording, setSelectedRecording] = useState<RecordingItem | null>(null);
   const [showTextPanel, setShowTextPanel] = useState<boolean>(true);
   const [isTextFullscreen, setIsTextFullscreen] = useState<boolean>(true);
+  const [autoAdvance, setAutoAdvance] = useState(false);
+  const [textOnlyPortion, setTextOnlyPortion] = useState<PortionSelectorKey | null>(null);
   // Whether the next recording selection should start playing automatically
   const autoplayRef = useRef<boolean>(true);
   const selectRecording = (rec: RecordingItem, autoplay: boolean) => {
     autoplayRef.current = autoplay;
+    setTextOnlyPortion(null);
     setSelectedRecording(rec);
   };
   const [standaloneTorahReader, setStandaloneTorahReader] = useState<boolean>(false);
@@ -102,6 +110,33 @@ export const StudentView: React.FC<StudentViewProps> = ({
   const generalMaterials = visiblePortions.filter((item) => getRecordingSection(item) === 'general');
   const generalAudio = generalMaterials.filter((item) => !isDocument(item));
   const generalDocs = generalMaterials.filter(isDocument);
+
+  const handleRecordingEnded = () => {
+    if (!autoAdvance || !selectedRecording || getRecordingSection(selectedRecording) === 'general') return;
+    const currentKey = inferPortionKeyFromRecording(selectedRecording);
+    if (!currentKey || currentKey === 'haftarah') return;
+    const sequence = PORTION_SELECTOR_OPTIONS.filter((option) =>
+      option.group === (currentKey.startsWith('chol-') ? 'chol' : 'shabbat')
+    );
+    const index = sequence.findIndex((option) => option.key === currentKey);
+    if (index < 0) return;
+    const nextTorahKey = currentKey === 'shabbat-7' ? null : sequence[index + 1]?.key;
+    const nextKey = nextTorahKey ?? (student.haftarah.trim() ? 'haftarah' : null);
+    if (!nextKey) return;
+    const nextTab = nextKey === 'haftarah' ? 'haftarah' : 'torah';
+    const portions = nextTab === 'haftarah' ? haftarahPortions : torahPortions;
+    const nextRecording = portions.find((item) => inferPortionKeyFromRecording(item) === nextKey);
+    setActiveTab(nextTab);
+    setShowTextPanel(true);
+    setStandaloneTorahReader(false);
+    setStandaloneHaftarahReader(false);
+    if (nextRecording) {
+      selectRecording(nextRecording, true);
+    } else {
+      setSelectedRecording(null);
+      setTextOnlyPortion(nextKey);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 pb-40" dir="rtl">
@@ -189,6 +224,19 @@ export const StudentView: React.FC<StudentViewProps> = ({
       </header>
 
       <main className="max-w-2xl mx-auto px-4 mt-4">
+        {textOnlyPortion && activeTab === (textOnlyPortion === 'haftarah' ? 'haftarah' : 'torah') && (
+          <TorahTextViewer
+            key={textOnlyPortion}
+            parashaName={student.parasha}
+            haftarahName={student.haftarah}
+            tradition={student.haftarahTradition}
+            defaultPortionKey={textOnlyPortion}
+            studentId={student.id}
+            onClose={() => setTextOnlyPortion(null)}
+            isFullscreen={isTextFullscreen}
+            onToggleFullscreen={setIsTextFullscreen}
+          />
+        )}
         {/* 3 Mobile Tabs: Torah Reading, Haftarah, General */}
         <div className="grid grid-cols-3 gap-1.5 bg-slate-200/80 p-1.5 rounded-2xl mb-5">
           <button
@@ -772,6 +820,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
           return next;
         })}
         autoPlay={autoplayRef.current}
+        onEnded={handleRecordingEnded}
+        autoAdvance={autoAdvance}
+        onAutoAdvanceChange={setAutoAdvance}
       />
     </div>
   );

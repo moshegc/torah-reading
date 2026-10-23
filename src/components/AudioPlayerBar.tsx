@@ -41,6 +41,9 @@ interface AudioPlayerBarProps {
   hideText?: boolean;
   /** Start playing automatically when the recording changes (default true). */
   autoPlay?: boolean;
+  onEnded?: () => void;
+  autoAdvance?: boolean;
+  onAutoAdvanceChange?: (enabled: boolean) => void;
 }
 
 export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
@@ -54,6 +57,9 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   onToggleTextExternally,
   hideText = false,
   autoPlay = true,
+  onEnded,
+  autoAdvance = false,
+  onAutoAdvanceChange,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const pitchGraphRef = useRef<VoicePitchGraph | null>(null);
@@ -327,7 +333,10 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         }}
         onPause={() => setIsPlaying(false)}
         onEnded={() => {
-          if (!isLooping) setIsPlaying(false);
+          if (!isLooping) {
+            setIsPlaying(false);
+            onEnded?.();
+          }
         }}
         onError={() => {
           setIsLoading(false);
@@ -402,6 +411,18 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             </button>
           </div>
         </div>
+
+        {onAutoAdvanceChange && (
+          <label className="flex items-center gap-2 text-xs font-semibold text-slate-700" dir="rtl">
+            <input
+              type="checkbox"
+              checked={autoAdvance}
+              onChange={(event) => onAutoAdvanceChange(event.target.checked)}
+              className="w-4 h-4 accent-indigo-600"
+            />
+            הפעלה אוטומטית של הקטע הבא
+          </label>
+        )}
 
         {errorMsg && (
           <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
