@@ -21,6 +21,7 @@ import {
 } from '../utils/trackerCalculations';
 import { AudioPlayerBar } from './AudioPlayerBar';
 import { AboutLink } from './AboutPage';
+import { ModalOverlay } from './ModalOverlay';
 import { TorahTextViewer } from './TorahTextViewer';
 import { getRecordingSection, isDocument, sortRecordings } from '../utils/recordings';
 
@@ -701,7 +702,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
       {/* Document / Image Preview Modal */}
       {previewDoc && (
-        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-3">
+        <ModalOverlay>
           <div className="bg-white w-full max-w-3xl rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
               <div className="font-bold text-slate-900 truncate">
@@ -736,7 +737,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto bg-slate-100 p-2 flex items-center justify-center min-h-[60vh]">
+            <div className="flex-1 overflow-y-auto bg-slate-100 p-2 flex items-center justify-center min-h-0">
               {previewDoc.ext === 'pdf' ? (
                 <iframe
                   src={getMediaStreamUrl(previewDoc)}
@@ -752,7 +753,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               )}
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       <AudioPlayerBar

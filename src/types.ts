@@ -45,6 +45,7 @@ export interface StudentProfile {
   parasha: string;
   haftarah: string;
   barMitzvahDate: string; // YYYY-MM-DD
+  studyStartDate?: string; // YYYY-MM-DD; absent means use the calculated suggestion
   parashaVerses: number; // פסוקים בפרשה
   skippedVerses: number; // פסוקים שנדלג
   learnedParashaVerses: number; // פסוקים שלמדנו (פרשה)
@@ -65,6 +66,7 @@ export interface StudentComputedStats {
   lessonsNeeded: number; // שיעורים ללימוד = ROUNDUP(L / 5, 0)
   spareWeeks: number; // שבועות עודפים = N - O
   estimatedStartDate: string; // התחלה משוערת = EDATE(D, -S)
+  studyStartDate: string;
   totalStudyWeeks: number; // שבועות לימוד כולל = ROUNDUP(J / 5, 0) + 8
   totalStudyMonths: number; // חודשי לימוד = ROUNDUP((J / 5) / 4, 0) + 2
   progressPercent: number;

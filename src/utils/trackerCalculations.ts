@@ -128,6 +128,7 @@ export function calculateStudentStats(
     lessonsNeeded: O,
     spareWeeks: P,
     estimatedStartDate: Q,
+    studyStartDate: student.studyStartDate ? formatDateIL(student.studyStartDate) : Q,
     totalStudyWeeks: R,
     totalStudyMonths: S,
     progressPercent,

@@ -53,6 +53,21 @@ describe('student archive', () => {
   });
 });
 
+describe('student start date', () => {
+  it('shows the selected study start on the student card instead of the suggestion', () => {
+    const html = renderView('saved', 0, [{
+      id: 'test', name: 'Test student', parasha: 'בראשית', haftarah: 'בראשית',
+      barMitzvahDate: '2027-06-15', studyStartDate: '2026-11-07',
+      parashaVerses: 100, skippedVerses: 0, learnedParashaVerses: 0,
+      haftarahVerses: 20, learnedHaftarahVerses: 0, portions: [],
+    }]);
+    const main = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/)![1];
+    expect(main).toContain('תחילת לימוד:');
+    expect(main).toContain('07/11/2026');
+    expect(main).not.toContain('15/10/2026');
+  });
+});
+
 describe('teacher header', () => {
   it('groups primary actions and account links into two ordered RTL rows', () => {
     const header = renderHeader();

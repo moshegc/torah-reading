@@ -7,6 +7,7 @@ import { classifyFileTitle, getMediaStreamUrl } from '../utils/trackerCalculatio
 import { getRecordingSection, withRecordingSection } from '../utils/recordings';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
 import { RecordingFileIcon } from './RecordingFileIcon';
+import { ModalOverlay } from './ModalOverlay';
 
 interface TeacherLibraryManagerProps {
   teacherId: string;
@@ -233,7 +234,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
+    <ModalOverlay>
       <div role="dialog" aria-modal="true" aria-labelledby="library-title" className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
           <h3 id="library-title" className="font-extrabold text-lg">מאגר חומרי לימוד</h3>
@@ -371,6 +372,6 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
           {notice && <p role="status" className="p-3 rounded-xl bg-emerald-50 text-emerald-800 text-sm">{notice}</p>}
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   );
 };

@@ -35,6 +35,7 @@ import {
 import { StudentView } from './components/StudentView';
 import { TeacherView } from './components/TeacherView';
 import { AboutLink, AboutPage } from './components/AboutPage';
+import { ModalOverlay } from './components/ModalOverlay';
 
 const STORAGE_KEY_STUDENTS = 'torah_trainer_students_v3';
 const STORAGE_KEY_HAFTAROT = 'torah_trainer_haftarot_v1';
@@ -754,8 +755,8 @@ function AppContent() {
 
       {/* Modal to configure Google Client ID if not set in env */}
       {showGoogleClientModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-white/15 w-full max-w-md rounded-3xl p-5 shadow-2xl space-y-3">
+        <ModalOverlay>
+          <div className="bg-slate-900 border border-white/15 w-full max-w-md rounded-3xl p-5 shadow-2xl space-y-3 overflow-y-auto">
             <h3 className="font-extrabold text-base text-white">
               הגדרת Google OAuth Client ID
             </h3>
@@ -794,7 +795,7 @@ function AppContent() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

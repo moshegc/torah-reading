@@ -47,6 +47,7 @@ describe('student archive persistence', () => {
     };
     const updatedStudent = {
       ...student, archived, parasha: 'Test', barMitzvahDate: '2027-04-01',
+      studyStartDate: '2026-11-15',
       learnedParashaVerses: 12, learnedHaftarahVerses: 5,
       readingPlan: { weekday: false, aliyot: ['1'], maftir: false, haftarah: true }, portions: [recording],
     };

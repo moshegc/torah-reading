@@ -41,6 +41,7 @@ import { getVerseReadingById } from '../utils/verseCounts';
 import { HaftarahSelect } from './HaftarahSelect';
 import { ReadingPlanPicker } from './ReadingPlanPicker';
 import { DateInput } from './DateInput';
+import { ModalOverlay } from './ModalOverlay';
 import { TeacherLibraryManager } from './TeacherLibraryManager';
 import {
   EMPTY_READING_PLAN,
@@ -151,6 +152,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [managingStudentId, setManagingStudentId] = useState<string | null>(null);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [addStudentStep, setAddStudentStep] = useState<1 | 2>(1);
+  const addStudentBodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showAddStudentModal) addStudentBodyRef.current?.scrollTo(0, 0);
+  }, [showAddStudentModal, addStudentStep]);
   const [showDriveSyncModal, setShowDriveSyncModal] = useState(false);
   const [showLibraryManager, setShowLibraryManager] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -176,7 +182,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const newHaftarahVerses = newReadingPlan.haftarah
     ? getHaftarahVerses(newHaftarah, newHaftarahTradition ?? defaultHaftarahTradition)
     : 0;
-  const [newFolderUrl, setNewFolderUrl] = useState('');
+  const [newStudyStartDate, setNewStudyStartDate] = useState('');
 
   // Bar mitzva calculator (inside Add Student modal)
   const [dobMode, setDobMode] = useState<'gregorian' | 'hebrew'>('gregorian');
@@ -543,8 +549,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     });
   };
 
-  const handleCreateStudent = async (e: React.FormEvent) => {
+  const handleCreateStudent = (e: React.FormEvent) => {
     e.preventDefault();
+    if (addStudentStep === 1) {
+      setAddStudentStep(2);
+      return;
+    }
     if (!newName.trim()) return;
 
     const slug =
@@ -556,21 +566,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       '-' +
       Math.floor(100 + Math.random() * 900);
 
-    let initialPortions: RecordingItem[] = [];
-    if (newFolderUrl.trim()) {
-      try {
-        initialPortions = await fetchFilesFromDriveFolder(newFolderUrl, slug);
-      } catch {
-        // Can also load later in manage modal
-      }
-    }
-
     const created: StudentProfile = {
       id: slug,
       name: newName.trim(),
       parasha: newParasha,
       haftarah: newHaftarah || newParasha,
       barMitzvahDate: newBarMitzvahDate,
+      studyStartDate: newStudyStartDate || undefined,
       parashaVerses: Number(newParashaVerses) || 0,
       skippedVerses: Number(newSkippedVerses) || 0,
       learnedParashaVerses: 0,
@@ -578,13 +580,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       learnedHaftarahVerses: 0,
       readingPlan: newReadingPlan,
       haftarahTradition: newHaftarahTradition,
-      driveFolderUrl: newFolderUrl.trim() || undefined,
-      portions: initialPortions,
+      portions: [],
     };
 
     onAddStudent(created);
     setNewName('');
-    setNewFolderUrl('');
+    setNewStudyStartDate('');
     setNewReadingPlan(EMPTY_READING_PLAN);
     setNewHaftarahTradition(undefined);
     setNewParashaVerses(0);
@@ -600,8 +601,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       .map((student) => {
         const stats = calculateStudentStats(student);
         const bmDate = parseFlexibleDate(student.barMitzvahDate) || today;
-        // Parse DD/MM/YYYY from stats.estimatedStartDate
-        const parts = stats.estimatedStartDate.split('/');
+        const parts = stats.studyStartDate.split('/');
         const startDate =
           parts.length === 3
             ? new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]))
@@ -671,7 +671,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
             <div role="group" aria-label="פעולות מורה" className="w-full flex items-center gap-1 sm:gap-2">
               <button
                 type="button"
-                onClick={() => setShowAddStudentModal(true)}
+                onClick={() => {
+                  setAddStudentStep(1);
+                  setShowAddStudentModal(true);
+                }}
                 className="px-2 sm:px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-xs transition"
               >
                 <UserPlus className="hidden min-[360px]:block w-4 h-4 shrink-0" />
@@ -878,10 +881,10 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       <div>
                         <div className="text-[11px] text-slate-500 flex items-center gap-1">
                           <Calendar className="w-3 h-3 text-indigo-500" />
-                          <span>התחלה משוערת:</span>
+                          <span>{student.studyStartDate ? 'תחילת לימוד:' : 'התחלה משוערת:'}</span>
                         </div>
                         <div className="font-extrabold text-indigo-950 text-sm mt-0.5">
-                          {stats.estimatedStartDate}
+                          {stats.studyStartDate}
                         </div>
                         <div className="text-[10px] text-slate-500">
                           {stats.totalStudyWeeks} שבועות ({stats.totalStudyMonths} חודשים)
@@ -1189,6 +1192,17 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
                           <div>
                             <label className="block text-[11px] text-slate-500 mb-0.5">
+                              תחילת לימוד (הצעה: {stats.estimatedStartDate})
+                            </label>
+                            <DateInput
+                              value={student.studyStartDate ?? ''}
+                              onChange={(value) => onUpdateStudent({ ...student, studyStartDate: value || undefined })}
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-[11px] text-slate-500 mb-0.5">
                               פסוקים שנדלג (מתוך {student.parashaVerses})
                             </label>
                             <input
@@ -1417,7 +1431,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                           </div>
                           <div className="text-[11px] text-slate-500 mt-0.5 flex items-center justify-between">
                             <span>
-                              התחלה: <strong>{stats.estimatedStartDate}</strong>
+                              התחלה: <strong>{stats.studyStartDate}</strong>
                             </span>
                             <span>
                               בר מצווה: <strong>{formatDateIL(student.barMitzvahDate)}</strong>
@@ -1492,7 +1506,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <th className="p-3 whitespace-nowrap">שם התלמיד</th>
                   <th className="p-3 whitespace-nowrap">פרשה</th>
                   <th className="p-3 whitespace-nowrap">הפטרה</th>
-                  <th className="p-3 whitespace-nowrap bg-indigo-950">התחלה משוערת</th>
+                  <th className="p-3 whitespace-nowrap bg-indigo-950">תחילת לימוד</th>
                   <th className="p-3 whitespace-nowrap">תאריך בר מצווה</th>
                   <th className="p-3 whitespace-nowrap">פס׳ בפרשה</th>
                   <th className="p-3 whitespace-nowrap">פס׳ שנדלג</th>
@@ -1525,7 +1539,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       <td className="p-2.5 whitespace-nowrap">{student.parasha}</td>
                       <td className="p-2.5 whitespace-nowrap">{student.haftarah}</td>
                       <td className="p-2.5 text-center font-extrabold text-indigo-800 bg-indigo-50/40 whitespace-nowrap">
-                        {st.estimatedStartDate}
+                        {st.studyStartDate}
                       </td>
                       <td className="p-2.5 whitespace-nowrap">
                         {formatDateIL(student.barMitzvahDate)}
@@ -1645,7 +1659,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
       {/* MODAL 1: LINK & MANAGE PORTIONS FOR A STUDENT */}
       {managingStudent && (
-        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
+        <ModalOverlay>
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
             <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
               <div>
@@ -2072,28 +2086,38 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       {/* MODAL 2: ADD NEW STUDENT */}
       {showAddStudentModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
+        <ModalOverlay>
           <form
             onSubmit={handleCreateStudent}
-            className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-student-title"
+            className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden flex flex-col"
           >
             <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
-              <h3 className="font-extrabold text-lg">הוספת תלמיד חדש</h3>
+              <div>
+                <h3 id="add-student-title" className="font-extrabold text-lg">הוספת תלמיד חדש</h3>
+                <p aria-live="polite" className="text-xs text-slate-300">
+                  שלב {addStudentStep} מתוך 2 – {addStudentStep === 1 ? 'פרטי התלמיד ופרשת בר המצווה' : 'תוכנית לימוד ותאריך התחלה'}
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowAddStudentModal(false)}
+                aria-label="סגור הוספת תלמיד"
                 className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
+            <div ref={addStudentBodyRef} className="p-5 overflow-y-auto flex-1 min-h-0">
+              <fieldset hidden={addStudentStep !== 1} disabled={addStudentStep !== 1} className="space-y-4 min-w-0">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   שם התלמיד *
@@ -2130,11 +2154,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </div>
 
                 {dobMode === 'gregorian' ? (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <DateInput
                       value={dobGregorian}
                       onChange={setDobGregorian}
-                      className="border border-slate-300 rounded-xl px-3 py-1.5 text-sm"
+                      className="min-w-0 w-full sm:w-auto border border-slate-300 rounded-xl px-3 py-1.5 text-sm"
                     />
                     <label className="flex items-center gap-1 text-[11px] text-slate-600">
                       <input
@@ -2146,7 +2170,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     </label>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="number"
                       min={1}
@@ -2227,20 +2251,19 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    הפטרה
+                    תאריך בר מצווה
                   </label>
-                  <HaftarahSelect
-                    value={newHaftarah}
-                    tradition={newHaftarahTradition ?? defaultHaftarahTradition}
-                    onChange={(name) => {
-                      setNewHaftarah(name);
-                      setNewReadingPlan({ ...newReadingPlan, haftarah: true });
-                    }}
+                  <DateInput
+                    required
+                    value={newBarMitzvahDate}
+                    onChange={setNewBarMitzvahDate}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />
                 </div>
               </div>
+              </fieldset>
 
+              <fieldset hidden={addStudentStep !== 2} disabled={addStudentStep !== 2} className="space-y-4 min-w-0">
               <ReadingPlanPicker
                 parasha={newParasha}
                 haftarahName={newHaftarah}
@@ -2260,12 +2283,15 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    תאריך בר מצווה
+                    הפטרה
                   </label>
-                  <DateInput
-                    required
-                    value={newBarMitzvahDate}
-                    onChange={setNewBarMitzvahDate}
+                  <HaftarahSelect
+                    value={newHaftarah}
+                    tradition={newHaftarahTradition ?? defaultHaftarahTradition}
+                    onChange={(name) => {
+                      setNewHaftarah(name);
+                      setNewReadingPlan({ ...newReadingPlan, haftarah: true });
+                    }}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />
                 </div>
@@ -2310,7 +2336,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </div>
 
               {/* Computed Start Date Preview inside Add Modal */}
-              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3 flex items-center justify-between text-xs">
+              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3 flex flex-wrap gap-2 items-center justify-between text-xs">
                 <div>
                   <span className="text-slate-600">תאריך התחלה משוער מחושב: </span>
                   <strong className="text-indigo-950 text-sm">
@@ -2324,17 +2350,16 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  קישור לתיקיית הפרשה ב-Google Drive (אופציונלי – ניתן להוסיף גם אחר כך)
+                  תאריך תחילת לימוד (אופציונלי)
                 </label>
-                <input
-                  type="text"
-                  value={newFolderUrl}
-                  onChange={(e) => setNewFolderUrl(e.target.value)}
-                  placeholder="https://drive.google.com/drive/folders/..."
-                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs"
-                  dir="ltr"
+                <DateInput
+                  value={newStudyStartDate}
+                  onChange={setNewStudyStartDate}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">ללא בחירה, ייעשה שימוש בתאריך המחושב. תאריך שנבחר נשמר גם אם תוכנית הלימוד משתנה.</p>
               </div>
+              </fieldset>
             </div>
 
             <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
@@ -2345,15 +2370,24 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               >
                 ביטול
               </button>
+              {addStudentStep === 2 && (
+                <button
+                  type="button"
+                  onClick={() => setAddStudentStep(1)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-200"
+                >
+                  חזרה
+                </button>
+              )}
               <button
                 type="submit"
                 className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold"
               >
-                הוסף תלמיד
+                {addStudentStep === 1 ? 'המשך' : 'הוסף תלמיד'}
               </button>
             </div>
           </form>
-        </div>
+        </ModalOverlay>
       )}
 
       {showLibraryManager && (
@@ -2370,7 +2404,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
       {/* MODAL 4: CLOUDFLARE R2 SYNC STATUS & GOOGLE PICKER SETTINGS */}
       {showDriveSyncModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3">
+        <ModalOverlay>
           <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
             <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -2521,7 +2555,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </div>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
 
       <AudioPlayerBar
