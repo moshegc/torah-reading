@@ -3,6 +3,13 @@ import type { ReadingPlan, HaftarahTradition } from './utils/readingPlan';
 
 export type RecordingSection = 'torah' | 'haftarah' | 'general';
 
+export interface RecordingNormalization {
+  version: 1;
+  integratedLufs: number;
+  truePeakDbtp: number;
+  gainDb: number;
+}
+
 export interface RecordingItem {
   id: string;
   title: string;
@@ -17,6 +24,7 @@ export interface RecordingItem {
   customAudioDataUrl?: string;
   r2Key?: string; // Cloudflare R2 object key (e.g. media/{teacherId}/{studentId}/...)
   r2Url?: string; // Direct R2 stream URL
+  normalization?: RecordingNormalization;
 }
 
 export interface ParashaMeta {
@@ -27,6 +35,7 @@ export interface ParashaMeta {
 }
 
 export type LibraryChange =
+  | { action: 'set-item-normalization'; folder: string; itemId: string; r2Key?: string; normalization: RecordingNormalization }
   | { action: 'create-folder' | 'delete-folder'; folder: string }
   | { action: 'add-item'; folder: string; item: RecordingItem }
   | { action: 'replace-item'; folder: string; itemId: string; item: RecordingItem }

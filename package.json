@@ -8,9 +8,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "generate:verse-counts": "node scripts/generate-verse-counts.mjs"
+    "generate:verse-counts": "node scripts/generate-verse-counts.mjs",
+    "pull:teacher-data": "node --env-file=.env scripts/pull-teacher-data.mjs"
   },
   "dependencies": {
+    "ebur128-wasm": "2.0.1",
     "@hebcal/core": "^6.14.6",
     "lucide-react": "^0.460.0",
     "react": "^18.3.1",
@@ -30,4 +32,3 @@
     "vitest": "^2.1.9"
   }
 }
-

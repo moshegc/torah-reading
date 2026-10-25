@@ -242,6 +242,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [localFileName, setLocalFileName] = useState('');
   const [localMimeType, setLocalMimeType] = useState('audio/aac');
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [normalizeAudio, setNormalizeAudio] = useState(true);
   const [studentUploadFolder, setStudentUploadFolder] = useState('');
   const [studentLibraryFolder, setStudentLibraryFolder] = useState('');
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
@@ -455,6 +456,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           mimeType: localMimeType,
           ext: singleExt,
           base64Data: localDataUrl,
+          normalizeAudio,
+          onStatus: setFolderLoadMsg,
         });
 
         const r2Portion: RecordingItem = {
@@ -467,6 +470,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           r2Url: uploaded.r2Url,
           viewUrl: uploaded.viewUrl,
           visible: true,
+          normalization: uploaded.normalization,
         };
 
         await saveStudentItems([r2Portion]);
@@ -1889,6 +1893,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <input
                     type="text"
                     value={singleLinkInput}
+                    disabled={isUploadingAudio}
                     onChange={(e) => setSingleLinkInput(e.target.value)}
                     placeholder="הדבק קישור לקובץ ב-Google Drive..."
                     className="flex-1 min-w-[200px] bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs"
@@ -1900,6 +1905,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       type="file"
                       accept="audio/*,.aac,.m4a,.mp3,.pdf"
                       onChange={handleLocalFilePick}
+                      disabled={isUploadingAudio}
                       className="hidden"
                     />
                   </label>
@@ -1921,6 +1927,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     )}
                   </button>
                 </div>
+                <label className="flex items-center gap-2 text-xs text-slate-700">
+                  <input type="checkbox" checked={normalizeAudio} disabled={isUploadingAudio} onChange={(event) => setNormalizeAudio(event.target.checked)} />
+                  נתח ואזן עוצמה לפני העלאת קובץ מהמכשיר (עד 16MB ו-5 דקות)
+                </label>
+                <p className="text-xs text-slate-500">הקובץ המקורי נשמר ללא שינוי. הקלטות שיובאו מ-Drive ניתן לנתח במאגר חומרי הלימוד.</p>
               </form>
               </section>
 

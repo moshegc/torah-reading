@@ -3,6 +3,7 @@
 // if R2_ACCOUNT_ID is not yet set in environment variables.
 
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -138,7 +139,74 @@ async function localFilePath(key) {
   return fullPath;
 }
 
+/**
+ * Returns the path to the local teacher configuration file if configured.
+ * Configured via LOCAL_TEACHER_DATA_FILE (e.g. 'teacher-data.local.json' or with '{teacherId}'),
+ * USE_LOCAL_TEACHER_DATA=true, or if 'teacher-data.local.json' exists on disk (outside test runs).
+ */
+export function getLocalTeacherDataPath(teacherId) {
+  const envFile = (process.env.LOCAL_TEACHER_DATA_FILE || '').trim();
+  const useLocal = (process.env.USE_LOCAL_TEACHER_DATA || '').trim();
+  let candidate = envFile;
+  if (!candidate && (useLocal === 'true' || useLocal === '1')) {
+    candidate = 'teacher-data.local.json';
+  }
+  if (!candidate && process.env.NODE_ENV !== 'test' && useLocal !== 'false' && existsSync(path.resolve(process.cwd(), 'teacher-data.local.json'))) {
+    candidate = 'teacher-data.local.json';
+  }
+  if (!candidate) return null;
+  const resolved = candidate.includes('{teacherId}')
+    ? candidate.replace(/\{teacherId\}/g, teacherId || 'default')
+    : candidate;
+  return path.resolve(process.cwd(), resolved);
+}
+
+export function isLocalTeacherDataActive(teacherId) {
+  return Boolean(getLocalTeacherDataPath(teacherId));
+}
+
+/**
+ * Fetches JSON directly from hosted Cloudflare R2 without local file overrides.
+ */
+export async function r2GetJsonFromR2(key) {
+  const signed = signR2Request({ method: 'GET', key });
+  const res = await fetch(signed.url, { method: 'GET', headers: signed.headers });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`R2 GET ${key} failed (${res.status}): ${text}`);
+  }
+  return await res.json();
+}
+
 export async function r2GetJson(key) {
+  const teacherMatch = typeof key === 'string' && key.match(/^teachers\/([^/]+)\/data\.json$/);
+  if (teacherMatch) {
+    const localPath = getLocalTeacherDataPath(teacherMatch[1]);
+    if (localPath) {
+      try {
+        const raw = await fs.readFile(localPath, 'utf8');
+        return JSON.parse(raw);
+      } catch (err) {
+        if (err && err.code !== 'ENOENT') throw err;
+        // If file doesn't exist locally yet and R2 is configured, seed from hosted R2
+        if (isR2Configured()) {
+          try {
+            const hosted = await r2GetJsonFromR2(key);
+            if (hosted) {
+              await fs.mkdir(path.dirname(localPath), { recursive: true });
+              await fs.writeFile(localPath, JSON.stringify(hosted, null, 2), 'utf8');
+              return hosted;
+            }
+          } catch {
+            // ignore seed errors
+          }
+        }
+        return null;
+      }
+    }
+  }
+
   if (!isR2Configured()) {
     try {
       const fp = await localFilePath(key);
@@ -150,19 +218,22 @@ export async function r2GetJson(key) {
     }
   }
 
-  const signed = signR2Request({ method: 'GET', key });
-  const res = await fetch(signed.url, { method: 'GET', headers: signed.headers });
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`R2 GET ${key} failed (${res.status}): ${text}`);
-  }
-  return await res.json();
+  return await r2GetJsonFromR2(key);
 }
 
 export async function r2PutJson(key, data) {
   const bodyStr = JSON.stringify(data, null, 2);
   const bodyBuf = Buffer.from(bodyStr, 'utf8');
+
+  const teacherMatch = typeof key === 'string' && key.match(/^teachers\/([^/]+)\/data\.json$/);
+  if (teacherMatch) {
+    const localPath = getLocalTeacherDataPath(teacherMatch[1]);
+    if (localPath) {
+      await fs.mkdir(path.dirname(localPath), { recursive: true });
+      await fs.writeFile(localPath, bodyBuf);
+      return { key, storage: 'local-file' };
+    }
+  }
 
   if (!isR2Configured()) {
     const fp = await localFilePath(key);

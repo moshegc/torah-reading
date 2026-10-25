@@ -3,11 +3,12 @@ export function sameRecording(a, b) {
 }
 
 export function copyFileCategory(item, source) {
-  const { section: _section, ...rest } = item;
+  const { section: _section, normalization: _normalization, ...rest } = item;
   return {
     ...rest,
     category: source.category,
     ...(source.section !== undefined ? { section: source.section } : {}),
+    ...(source.normalization !== undefined ? { normalization: source.normalization } : {}),
   };
 }
 

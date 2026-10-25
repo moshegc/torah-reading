@@ -302,8 +302,8 @@ registerProcessor('${WORKLET_PROCESSOR_NAME}', PsolaVoicePitchProcessor);
 export interface VoicePitchGraph {
   context: AudioContext;
   sourceNode: MediaElementAudioSourceNode;
-  workletNode: AudioWorkletNode;
-  setPitchSemitones: (semitones: number) => void;
+  setPitchSemitones: (semitones: number) => Promise<void>;
+  setGain: (gain: number) => void;
   dispose: () => void;
 }
 
@@ -324,6 +324,10 @@ async function ensureWorkletLoaded(ctx: AudioContext): Promise<void> {
     const url = URL.createObjectURL(blob);
     workletModulePromise = ctx.audioWorklet
       .addModule(url)
+      .catch((error) => {
+        workletModulePromise = null;
+        throw error;
+      })
       .finally(() => URL.revokeObjectURL(url));
   }
   return workletModulePromise;
@@ -334,50 +338,69 @@ export async function createVoicePitchGraph(
   initialSemitones: number
 ): Promise<VoicePitchGraph> {
   const ctx = getOrCreateAudioContext();
-  if (ctx.state === 'suspended') {
-    await ctx.resume();
-  }
-
-  await ensureWorkletLoaded(ctx);
-
   const sourceNode = ctx.createMediaElementSource(audioElement);
-  const workletNode = new AudioWorkletNode(ctx, WORKLET_PROCESSOR_NAME, {
-    numberOfInputs: 1,
-    numberOfOutputs: 1,
-    outputChannelCount: [2],
-  });
+  const gainNode = ctx.createGain();
+  let workletNode: AudioWorkletNode | null = null;
+  let disposed = false;
+  let pitchRequest = 0;
+  let shifted = false;
 
-  const setPitchSemitones = (semitones: number) => {
+  const setPitchSemitones = async (semitones: number) => {
+    const request = ++pitchRequest;
+    if (disposed) return;
+    if (Math.abs(semitones) < 0.01) {
+      if (shifted) {
+        sourceNode.disconnect();
+        workletNode?.disconnect();
+        sourceNode.connect(gainNode);
+        shifted = false;
+      }
+      return;
+    }
+    await ensureWorkletLoaded(ctx);
+    if (disposed || request !== pitchRequest) return;
+    if (!workletNode) {
+      workletNode = new AudioWorkletNode(ctx, WORKLET_PROCESSOR_NAME, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+      });
+    }
     const factor = Math.pow(2, semitones / 12);
-    const isBypass = Math.abs(semitones) < 0.01 ? 1.0 : 0.0;
     const pitchParam = workletNode.parameters.get('pitchFactor');
     const bypassParam = workletNode.parameters.get('bypass');
     if (pitchParam) {
       pitchParam.setValueAtTime(factor, ctx.currentTime);
     }
     if (bypassParam) {
-      bypassParam.setValueAtTime(isBypass, ctx.currentTime);
+      bypassParam.setValueAtTime(0, ctx.currentTime);
+    }
+    if (!shifted) {
+      sourceNode.disconnect();
+      sourceNode.connect(workletNode);
+      workletNode.connect(gainNode);
+      shifted = true;
     }
   };
 
-  setPitchSemitones(initialSemitones);
+  sourceNode.connect(gainNode);
+  gainNode.connect(ctx.destination);
 
-  sourceNode.connect(workletNode);
-  workletNode.connect(ctx.destination);
-
-  return {
+  const graph: VoicePitchGraph = {
     context: ctx,
     sourceNode,
-    workletNode,
     setPitchSemitones,
+    setGain: (gain) => {
+      if (!Number.isFinite(gain) || gain < 0) throw new Error('Invalid playback gain');
+      gainNode.gain.setValueAtTime(gain, ctx.currentTime);
+    },
     dispose: () => {
-      try {
-        sourceNode.disconnect();
-        workletNode.disconnect();
-      } catch {
-        // ignore disconnect errors
-      }
+      disposed = true;
+      sourceNode.disconnect();
+      workletNode?.disconnect();
+      gainNode.disconnect();
     },
   };
+  if (initialSemitones !== 0) await setPitchSemitones(initialSemitones);
+  return graph;
 }
-

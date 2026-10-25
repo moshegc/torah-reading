@@ -90,6 +90,17 @@ export function AboutPage() {
               <a href="https://developers.sefaria.org/docs/usage-of-our-name-and-logo" target="_blank" rel="noreferrer" className={linkClass}>מידע על זכויות ושימוש בנתוני ספריא</a>.
             </p>
           </div>
+          <div className="space-y-2">
+            <h3 className="font-bold text-base">
+              <a href="https://github.com/streamonkey/ebur128_wasm" target="_blank" rel="noreferrer" className={linkClass}>ebur128-wasm</a>
+            </h3>
+            <p>מדידת עוצמת ההקלטות לפי EBU R128 מתבצעת במכשיר בעזרת ebur128-wasm מאת Wilhelm Bartel / StreamOnKey, המבוססת על ספריית ebur128 בשפת Rust מאת Sebastian Dröge ותורמים.</p>
+            <p>
+              רישיון <a href="/licenses/ebur128-wasm.txt" target="_blank" rel="noreferrer" className={linkClass}>Apache-2.0</a>.
+              {' '}<a href="https://github.com/sdroege/ebur128" target="_blank" rel="noreferrer" className={linkClass}>קוד המקור של ebur128</a>.
+              {' '}<a href="/licenses/ebur128.txt" target="_blank" rel="noreferrer" className={linkClass}>רישיון MIT — Jan Kokemüller, Sebastian Dröge</a>.
+            </p>
+          </div>
           <p className="text-slate-500">האפליקציה היא מיזם עצמאי ואינה מפותחת או מאושרת על ידי Hebcal או ספריא.</p>
         </section>
       </main>

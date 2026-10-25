@@ -27,6 +27,7 @@ import {
   VoicePitchGraph,
 } from '../utils/voicePitchShifter';
 import { TorahTextViewer } from './TorahTextViewer';
+import { normalizationGain } from '../audio/normalization';
 
 interface AudioPlayerBarProps {
   recording: RecordingItem | null;
@@ -91,6 +92,8 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     pitchSetting.studentId === studentId && pitchSetting.recordingId === recording?.id
       ? pitchSetting.value
       : savedPitch;
+  const playbackSettingsRef = useRef({ pitchShift, normalization: recording?.normalization });
+  playbackSettingsRef.current = { pitchShift, normalization: recording?.normalization };
 
   const hasSefariaText =
     !hideText &&
@@ -122,13 +125,12 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     }
   }, [studentId]);
 
-  // Lazily connect the <audio> element to the PSOLA voice pitch worklet when pitchShift !== 0
-  const ensurePitchGraph = useCallback(async (targetPitch: number) => {
+  const ensurePitchGraph = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    // If pitch is 0 and we haven't attached Web Audio yet, keep native direct playback
-    if (targetPitch === 0 && !pitchGraphRef.current) {
+    if (playbackSettingsRef.current.pitchShift === 0 &&
+        !playbackSettingsRef.current.normalization && !pitchGraphRef.current) {
       return;
     }
 
@@ -137,12 +139,13 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
         if (pitchGraphRef.current.context.state === 'suspended') {
           await pitchGraphRef.current.context.resume();
         }
-        pitchGraphRef.current.setPitchSemitones(targetPitch);
+        pitchGraphRef.current.setGain(normalizationGain(playbackSettingsRef.current.normalization));
+        await pitchGraphRef.current.setPitchSemitones(playbackSettingsRef.current.pitchShift);
         return;
       }
 
       if (!graphInitPromiseRef.current) {
-        graphInitPromiseRef.current = createVoicePitchGraph(audio, targetPitch)
+        graphInitPromiseRef.current = createVoicePitchGraph(audio, 0)
           .then((graph) => {
             if (audioRef.current !== audio) {
               graph.dispose();
@@ -159,21 +162,32 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
       const graph = await graphInitPromiseRef.current;
       if (graph) {
-        graph.setPitchSemitones(targetPitch);
+        if (graph.context.state === 'suspended') await graph.context.resume();
+        graph.setGain(normalizationGain(playbackSettingsRef.current.normalization));
+        await graph.setPitchSemitones(playbackSettingsRef.current.pitchShift);
       }
     } catch (err) {
+      pitchGraphRef.current?.setGain(1);
       console.warn('Voice pitch graph initialization warning:', err);
+      setErrorMsg('לא ניתן להחיל את איזון העוצמה או שינוי הסולם. נסו שוב.');
     }
   }, []);
 
-  // Sync changes to pitchShift into the PSOLA voice pitch worklet
   useEffect(() => {
-    if (pitchShift !== 0 || pitchGraphRef.current) {
-      ensurePitchGraph(pitchShift);
+    if (pitchShift !== 0 || recording?.normalization || pitchGraphRef.current) {
+      ensurePitchGraph();
     }
-  }, [pitchShift, ensurePitchGraph]);
+  }, [pitchShift, recording?.normalization, ensurePitchGraph]);
 
   // Cleanup graph on unmount
+  useEffect(() => {
+    if (!recording) {
+      pitchGraphRef.current?.dispose();
+      pitchGraphRef.current = null;
+      attachedAudioElRef.current = null;
+    }
+  }, [Boolean(recording)]);
+
   useEffect(() => {
     return () => {
       if (pitchGraphRef.current) {
@@ -213,9 +227,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     audio.load();
 
     const startPlayback = async () => {
-      if (pitchShift !== 0 || pitchGraphRef.current) {
-        await ensurePitchGraph(pitchShift);
-      }
+      await ensurePitchGraph();
       if (cancelled) return;
       await audio.play();
       if (cancelled) {
@@ -249,9 +261,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       setIsPlaying(false);
     } else {
       setErrorMsg(null);
-      if (pitchShift !== 0 || pitchGraphRef.current) {
-        await ensurePitchGraph(pitchShift);
-      }
+      await ensurePitchGraph();
       if (audioRef.current !== audio) return;
       audio
         .play()

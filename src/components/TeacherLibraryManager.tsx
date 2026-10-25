@@ -4,7 +4,8 @@ import type { LibraryChange, RecordingItem, RecordingSection } from '../types';
 import { PARASHA_OPTIONS } from '../data/parashaOptions';
 import { uploadLocalFileToR2 } from '../utils/cloudSync';
 import { classifyFileTitle, getMediaStreamUrl } from '../utils/trackerCalculations';
-import { getRecordingSection, withRecordingSection } from '../utils/recordings';
+import { getRecordingSection, isDocument, withRecordingSection } from '../utils/recordings';
+import { analyzeRecordingUrl } from '../audio/analyzeRecording';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
 import { RecordingFileIcon } from './RecordingFileIcon';
 import { ModalOverlay } from './ModalOverlay';
@@ -72,6 +73,8 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   const [renameTarget, setRenameTarget] = useState<'folder' | RecordingItem | null>(null);
   const [renameName, setRenameName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [normalizeAudio, setNormalizeAudio] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [failedChange, setFailedChange] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -106,13 +109,29 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
     setError(null);
     setFailedChange(false);
     setNotice(null);
+    setProgress(null);
     try {
       await operation();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'השינוי במאגר לא נשמר');
     } finally {
       setBusy(false);
+      setProgress(null);
     }
+  };
+
+  const analyzeItems = async (recordings: RecordingItem[]) => {
+    await runAction(async () => {
+      for (const [index, item] of recordings.entries()) {
+        setProgress(`מנתח ${index + 1}/${recordings.length}: ${item.aliyah}`);
+        const normalization = await analyzeRecordingUrl(getMediaStreamUrl(item));
+        if (!await mutate({
+          action: 'set-item-normalization', folder, itemId: item.id,
+          r2Key: item.r2Key, normalization,
+        }, `איזון העוצמה נשמר: ${item.aliyah}`)) return;
+      }
+      setNotice(`ניתוח ${recordings.length} הקלטות הושלם. איזון העוצמה נשמר גם בשיוכי התלמידים.`);
+    });
   };
 
   const mutate = async (change: LibraryChange, message: string): Promise<boolean> => {
@@ -206,6 +225,8 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
           mimeType: file.type || MIME_BY_EXT[ext],
           ext,
           base64Data: await readFileData(file),
+          normalizeAudio,
+          onStatus: setProgress,
         });
         item = {
           id: uploaded.id,
@@ -217,6 +238,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
           r2Url: uploaded.r2Url,
           viewUrl: uploaded.viewUrl,
           visible: true,
+          normalization: uploaded.normalization,
         };
         setUploadedItem(item);
       }
@@ -276,6 +298,12 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
               <button type="button" onClick={deleteFolder} disabled={disabled || !folder} className="px-3 py-2 rounded-xl text-rose-700 bg-rose-50 text-sm font-bold">מחק תיקייה</button>
             </div>
           ) : <p className="text-sm text-slate-500">אין תיקיות במאגר. צור תיקייה כדי להוסיף חומרי לימוד.</p>}
+          {items.some((item) => !isDocument(item) && !item.normalization) && (
+            <button type="button" disabled={disabled} onClick={() => analyzeItems(items.filter((item) => !isDocument(item) && !item.normalization))} className="text-indigo-700 text-sm font-bold">
+              נתח עוצמה להקלטות שטרם נותחו בתיקייה
+            </button>
+          )}
+          <p className="text-xs text-slate-500">ניתוח העוצמה מתבצע במכשיר זה, ללא שינוי הקובץ המקורי. עד 16MB ו-5 דקות להקלטה; יש להשאיר את החלונית פתוחה. קבצים מיובאים מ-Drive ניתנים לניתוח כאן.</p>
 
           {renameTarget && (
             <form onSubmit={submitRename} className="flex flex-wrap items-end gap-2">
@@ -300,7 +328,12 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                       if (replacementId === item.id) setSection(nextSection);
                     }
                   })} />
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2">
+                    {!isDocument(item) && (
+                      <button type="button" disabled={disabled} onClick={() => analyzeItems([item])} className="text-indigo-700 p-1 text-xs font-bold">
+                        {item.normalization ? 'נתח עוצמה מחדש' : 'נתח עוצמה'}
+                      </button>
+                    )}
                     <button type="button" disabled={disabled} onClick={() => { setRenameTarget(item); setRenameName(item.aliyah); }} className="text-indigo-700 p-1 text-xs font-bold">שנה שם</button>
                     <button type="button" disabled={disabled || folderOptions.length < 2} onClick={() => { setMovingId(item.id); setDestination(folderOptions.find((name) => name !== folder) ?? ''); }} className="text-indigo-700 p-1 text-xs font-bold">העבר</button>
                     <button type="button" aria-label={`החלף ${item.aliyah}`} disabled={disabled} onClick={() => { resetUpload(); setReplacementId(item.id); setTitle(item.aliyah); setSection(getRecordingSection(item)); setNotice(null); fileInput.current?.focus(); }} className="text-indigo-700 p-1 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /><span>החלף</span></button>
@@ -362,6 +395,10 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                 <p className="text-xs font-bold text-slate-700">סוג חומר הלימוד לתלמיד</p>
                 <RecordingSectionSelect label="סוג חומר הלימוד בהעלאה למאגר" value={section} onChange={setSection} disabled={disabled} />
               </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={normalizeAudio} disabled={disabled} onChange={(event) => setNormalizeAudio(event.target.checked)} />
+                נתח ואזן עוצמת הקלטה לפני ההעלאה
+              </label>
               <button type="submit" disabled={disabled || !file} className="w-full px-4 py-2 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
                 {busy ? 'שומר...' : replacement ? 'החלף ושמור' : 'העלה ושמור'}
@@ -369,6 +406,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
             </form>
           )}
           {(error || failedChange) && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-800 text-sm">{error ?? operationError ?? 'השינוי לא הושלם. נסה שוב.'}</p>}
+          {progress && <p role="status" className="text-sm text-indigo-700">{progress}</p>}
           {notice && <p role="status" className="p-3 rounded-xl bg-emerald-50 text-emerald-800 text-sm">{notice}</p>}
         </div>
       </div>

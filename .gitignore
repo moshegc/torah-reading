@@ -12,6 +12,8 @@ node_modules
 dist
 dist-ssr
 *.local
+*.local.json
+teacher-data.local.json
 
 # Vercel
 .vercel

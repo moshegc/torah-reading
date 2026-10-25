@@ -1,4 +1,4 @@
-import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody } from './_r2.js';
+import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody, isLocalTeacherDataActive } from './_r2.js';
 import { sanitizeTeacherId, verifyTeacherToken } from './r2-auth.js';
 import { sameRecording as sameItem, copyFileCategory, syncStudentFileCategories } from './_recordings.js';
 
@@ -35,6 +35,15 @@ function recordings(data) {
   ];
 }
 
+function validateNormalization(value) {
+  if (!value || value.version !== 1 ||
+      !Number.isFinite(value.integratedLufs) || !Number.isFinite(value.truePeakDbtp) ||
+      !Number.isFinite(value.gainDb) ||
+      Math.abs(value.gainDb - Math.min(-18 - value.integratedLufs, -2 - value.truePeakDbtp, 12)) > 0.001) {
+    throw new LibraryError('נתוני איזון העוצמה אינם תקינים');
+  }
+}
+
 function validateItem(item, teacherId) {
   if (!item || typeof item.id !== 'string' || !item.id.trim() ||
       typeof item.title !== 'string' || !item.title.trim() ||
@@ -44,6 +53,10 @@ function validateItem(item, teacherId) {
     throw new LibraryError('פרטי חומר הלימוד אינם תקינים');
   }
   assertOwnedKey(item.r2Key, teacherId);
+  if (item.normalization !== undefined) {
+    if (!['aac', 'm4a', 'mp3'].includes(item.ext)) throw new LibraryError('ניתן לנתח עוצמה רק להקלטות');
+    validateNormalization(item.normalization);
+  }
 }
 
 export function applyLibraryChange(data, change, teacherId) {
@@ -114,6 +127,17 @@ export function applyLibraryChange(data, change, teacherId) {
           ...student, portions: (student.portions || []).map(rename),
         }));
       }
+    } else if (change.action === 'set-item-normalization') {
+      const target = items.find((item) => item.id === change.itemId);
+      if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
+      if (target.r2Key !== change.r2Key) throw new LibraryError('הקובץ הוחלף במהלך הניתוח. יש לנתח מחדש.', 409);
+      if (!['aac', 'm4a', 'mp3'].includes(target.ext)) throw new LibraryError('ניתן לנתח עוצמה רק להקלטות');
+      validateNormalization(change.normalization);
+      const update = (item) => sameItem(item, target) ? { ...item, normalization: change.normalization } : item;
+      for (const name of Object.keys(library)) library[name] = library[name].map(update);
+      students = students.map((student) => ({
+        ...student, portions: (student.portions || []).map(update),
+      }));
     } else if (change.action === 'set-item-section') {
       const target = items.find((item) => item.id === change.itemId);
       if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
@@ -216,7 +240,13 @@ export default async function handler(req, res) {
         const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
         for (const key of next.pendingMediaDeletes) {
           assertOwnedKey(key, teacherId);
-          if (!retainedKeys.has(key)) await r2DeleteObject(key);
+          if (!retainedKeys.has(key)) {
+            if (isLocalTeacherDataActive(teacherId)) {
+              console.warn(`[LOCAL TEACHER CONFIG] Skipping R2 object deletion for hosted asset: ${key}`);
+            } else {
+              await r2DeleteObject(key);
+            }
+          }
         }
         const completed = { ...next, pendingMediaDeletes: [], updatedAt: new Date().toISOString() };
         await r2PutJson(dataKey, completed);

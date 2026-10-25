@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody } from './_r2.js';
+import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody, isLocalTeacherDataActive } from './_r2.js';
 import { verifyTeacherToken } from './r2-auth.js';
 import handler, { applyLibraryChange } from './library.js';
 import dataHandler from './r2-data.js';
@@ -10,6 +10,7 @@ vi.mock('./_r2.js', () => ({
   r2DeleteObject: vi.fn(),
   readJsonBody: vi.fn(),
   isR2Configured: () => true,
+  isLocalTeacherDataActive: vi.fn(() => false),
 }));
 vi.mock('./r2-auth.js', () => ({
   sanitizeTeacherId: (value) => value,
@@ -68,6 +69,53 @@ beforeEach(() => {
 });
 
 describe('library changes', () => {
+  const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+
+  it('saves normalization for matching files in every folder and student without changing visibility', () => {
+    const data = fixture();
+    data.parashaLibrary.shared = [{ ...recording, id: 'alias' }];
+    data.students[1].portions[0].id = 'student-alias';
+    const next = applyLibraryChange(data, {
+      action: 'set-item-normalization', folder: 'בראשית', itemId: recording.id,
+      r2Key: recording.r2Key, normalization,
+    }, 'teacher');
+    expect(next.parashaLibrary.shared[0].normalization).toEqual(normalization);
+    expect(next.students[0].portions[0]).toMatchObject({ normalization, visible: true });
+    expect(next.students[1].portions[0]).toMatchObject({ normalization, visible: false });
+    expect(next.pendingMediaDeletes).toEqual([]);
+    expect(data.students[0].portions[0].normalization).toBeUndefined();
+  });
+
+  it('rejects stale analysis, document analysis and unsafe or malformed gains', () => {
+    const change = {
+      action: 'set-item-normalization', folder: 'בראשית', itemId: recording.id,
+      r2Key: recording.r2Key, normalization,
+    };
+    expect(() => applyLibraryChange(fixture(), { ...change, r2Key: 'old-file' }, 'teacher')).toThrow('הוחלף');
+    expect(() => applyLibraryChange(fixture(), {
+      ...change, folder: 'כללי', itemId: document.id, r2Key: document.r2Key,
+    }, 'teacher')).toThrow();
+    for (const invalid of [null, {}, { ...normalization, gainDb: 40 }, { ...normalization, truePeakDbtp: NaN }]) {
+      expect(() => applyLibraryChange(fixture(), { ...change, normalization: invalid }, 'teacher')).toThrow();
+      expect(() => applyLibraryChange(fixture(), {
+        action: 'add-item', folder: 'בראשית', item: { ...replacement, normalization: invalid },
+      }, 'teacher')).toThrow();
+    }
+  });
+
+  it('preserves uploaded analysis when assigned and clears stale analysis on replacement', () => {
+    let next = applyLibraryChange(fixture(), {
+      action: 'add-student-items', folder: 'בראשית', studentId: 'visible-student',
+      items: [{ ...replacement, normalization }],
+    }, 'teacher');
+    expect(next.students[0].portions.at(-1).normalization).toEqual(normalization);
+    next = applyLibraryChange(next, {
+      action: 'replace-item', folder: 'בראשית', itemId: replacement.id,
+      item: { ...replacement, id: 'new', r2Key: 'media/teacher/library/next.mp3' },
+    }, 'teacher');
+    expect(next.students[0].portions.at(-1).normalization).toBeUndefined();
+  });
+
   it('persists upload file categories in the library and assigned copies', () => {
     const documentUpload = {
       ...document, id: 'new-document', r2Key: 'media/teacher/library/new-document.pdf', section: 'general',
@@ -415,5 +463,16 @@ describe('persistent deletion workflow', () => {
     expect((await request({ action: 'delete-folder', folder: 'כללי' })).status).toBe(403);
     expect(r2PutJson).not.toHaveBeenCalled();
     expect(r2DeleteObject).not.toHaveBeenCalled();
+  });
+
+  it('skips deleting hosted media when local teacher data mode is active', async () => {
+    isLocalTeacherDataActive.mockReturnValueOnce(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await request({ action: 'delete-folder', folder: 'בראשית' });
+    expect(result.status).toBe(200);
+    expect(r2DeleteObject).not.toHaveBeenCalled();
+    expect(stored.pendingMediaDeletes).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

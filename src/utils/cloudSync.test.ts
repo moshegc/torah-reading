@@ -11,6 +11,9 @@ import {
   changeTeacherLibrary,
   LibraryMutationError,
 } from './cloudSync';
+import { analyzeUpload } from '../audio/analyzeRecording';
+
+vi.mock('../audio/analyzeRecording', () => ({ analyzeUpload: vi.fn() }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -19,6 +22,55 @@ afterEach(() => {
 
 const teacher = { teacherId: 'test', token: 'test-token' };
 const saveParams = { ...teacher, students: [], haftarotMap: {} };
+
+describe('upload loudness analysis', () => {
+  const params = {
+    ...teacher, studentId: 'student', fileName: 'audio.mp3',
+    mimeType: 'audio/mpeg', ext: 'mp3', base64Data: 'data:audio/mpeg;base64,AAAA',
+  };
+  const normalization = { version: 1 as const, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+  function mockUpload() {
+    const blob = new Blob(['original']);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, blob: async () => blob })
+      .mockResolvedValue({ ok: true, json: async () => ({ ok: true, id: 'uploaded' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    return { fetchMock, blob };
+  }
+
+  it('analyses before upload, preserves original bytes and returns metadata for persistence', async () => {
+    const { fetchMock, blob } = mockUpload();
+    vi.mocked(analyzeUpload).mockResolvedValue(normalization);
+    const onStatus = vi.fn();
+    const result = await uploadLocalFileToR2({ ...params, onStatus });
+    expect(analyzeUpload).toHaveBeenCalledWith(blob);
+    expect(result.normalization).toEqual(normalization);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(params);
+    expect(onStatus).toHaveBeenNthCalledWith(1, 'מנתח עוצמת הקלטה...');
+    expect(onStatus).toHaveBeenNthCalledWith(2, 'מעלה קובץ...');
+  });
+
+  it('does not upload if analysis is cancelled', async () => {
+    const { fetchMock } = mockUpload();
+    vi.mocked(analyzeUpload).mockRejectedValueOnce(new Error('Cancelled'));
+    await expect(uploadLocalFileToR2(params)).rejects.toThrow('Cancelled');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows explicitly accepted uploads without normalization', async () => {
+    mockUpload();
+    vi.mocked(analyzeUpload).mockResolvedValueOnce(undefined);
+    expect(await uploadLocalFileToR2(params)).not.toHaveProperty('normalization');
+  });
+
+  it.each(['pdf', 'mp3'])('skips analysis for documents or an unchecked normalization option (%s)', async (ext) => {
+    vi.mocked(analyzeUpload).mockClear();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) }));
+    await uploadLocalFileToR2({ ...params, ext, normalizeAudio: ext === 'pdf' });
+    expect(analyzeUpload).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('library management requests', () => {
   it('sends authenticated folder changes and returns the saved teacher configuration', async () => {
@@ -94,7 +146,7 @@ describe('storage messages', () => {
     ['import', () => transferDriveFilesToR2({ ...teacher, studentId: 'student', fileId: 'file' })],
     ['upload', () => uploadLocalFileToR2({
       ...teacher, studentId: 'student', fileName: 'audio.mp3',
-      mimeType: 'audio/mpeg', ext: 'mp3', base64Data: '',
+      mimeType: 'audio/mpeg', ext: 'mp3', base64Data: '', normalizeAudio: false,
     })],
   ])('hides provider details for %s while logging the original error', async (_name, request) => {
     const message = 'Cloudflare R2 request failed: R2_BUCKET_NAME';

@@ -210,6 +210,27 @@ describe('teacher-owned study materials', () => {
     }));
   });
 
+  it('returns canonical normalization to students and preserves it during regular saves', async () => {
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const source = {
+      id: 'shared', category: 'shabbat', ext: 'mp3',
+      r2Key: 'media/teacher/library/shared.mp3', normalization,
+    };
+    const assigned = { ...source, id: 'alias', visible: false, normalization: undefined };
+    r2GetJson.mockResolvedValue({
+      students: [{ ...student, portions: [assigned] }], parashaLibrary: { Custom: [source] },
+    });
+    const res = response();
+    await handler({ method: 'GET', query: { teacher: 'teacher', student: 'student' } }, res);
+    expect(res.json.mock.calls[0][0].student.portions[0]).toMatchObject({ normalization, visible: false });
+    readJsonBody.mockResolvedValue({ students: [{ ...student, portions: [assigned] }] });
+    r2PutJson.mockResolvedValue({ storage: 'r2' });
+    await handler({ method: 'POST', headers: {} }, response());
+    expect(r2PutJson).toHaveBeenCalledWith('teachers/teacher/data.json', expect.objectContaining({
+      students: [{ ...student, portions: [{ ...assigned, normalization }] }],
+    }));
+  });
+
   it('uses a legacy file category even when a student copy has an explicit conflicting section', async () => {
     const source = { id: 'legacy', category: 'blessings', ext: 'mp3' };
     const assigned = { ...source, category: 'shabbat', section: 'torah', visible: true };

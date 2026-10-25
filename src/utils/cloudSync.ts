@@ -1,4 +1,5 @@
-import type { StudentProfile, RecordingItem, LibraryChange } from '../types';
+import type { StudentProfile, RecordingItem, LibraryChange, RecordingNormalization } from '../types';
+import { analyzeUpload } from '../audio/analyzeRecording';
 
 const DEFAULT_GAS_WEBAPP_URL =
   (import.meta as any).env?.VITE_GAS_WEBAPP_URL || '';
@@ -270,6 +271,8 @@ export async function uploadLocalFileToR2(params: {
   mimeType: string;
   ext: string;
   base64Data: string;
+  normalizeAudio?: boolean;
+  onStatus?: (message: string) => void;
 }): Promise<{
   id: string;
   r2Key: string;
@@ -277,14 +280,26 @@ export async function uploadLocalFileToR2(params: {
   viewUrl: string;
   name: string;
   ext: string;
+  normalization?: RecordingNormalization;
 }> {
+  const { normalizeAudio = true, onStatus, ...upload } = params;
+  let normalization: RecordingNormalization | undefined;
+  if (normalizeAudio && ['aac', 'm4a', 'mp3'].includes(params.ext)) {
+    onStatus?.('מנתח עוצמת הקלטה...');
+    const dataUrl = params.base64Data.startsWith('data:')
+      ? params.base64Data : `data:${params.mimeType};base64,${params.base64Data}`;
+    const response = await fetch(dataUrl);
+    if (!response.ok) throw new Error('קריאת הקובץ לניתוח נכשלה');
+    normalization = await analyzeUpload(await response.blob());
+  }
+  onStatus?.('מעלה קובץ...');
   const res = await fetch('/api/r2-media', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${params.token}`,
     },
-    body: JSON.stringify(params),
+    body: JSON.stringify(upload),
   });
   const json = await res.json();
   if (!res.ok || !json.ok) {
@@ -297,6 +312,7 @@ export async function uploadLocalFileToR2(params: {
     viewUrl: json.viewUrl,
     name: json.name,
     ext: json.ext,
+    ...(normalization ? { normalization } : {}),
   };
 }
 
