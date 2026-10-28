@@ -73,10 +73,10 @@ describe('teacher header', () => {
     const header = renderHeader();
     const primary = header.match(/aria-label="פעולות מורה"[^>]*>([\s\S]*?)<\/div>/)![1];
     expect(primary).toContain('תלמיד חדש');
-    expect(primary).toContain('העלאת תוכן');
+    expect(primary).toContain('אחסון');
     expect(primary).toContain('<select');
-    expect(primary.indexOf('תלמיד חדש')).toBeLessThan(primary.indexOf('העלאת תוכן'));
-    expect(primary.indexOf('העלאת תוכן')).toBeLessThan(primary.indexOf('<select'));
+    expect(primary.indexOf('תלמיד חדש')).toBeLessThan(primary.indexOf('אחסון'));
+    expect(primary.indexOf('אחסון')).toBeLessThan(primary.indexOf('<select'));
     expect(primary).toContain('נשמר');
     expect(primary.indexOf('</select>')).toBeLessThan(primary.indexOf('נשמר'));
     expect(primary).not.toContain('יציאה');
@@ -99,9 +99,9 @@ describe('teacher header', () => {
     expect(header).toContain('(2 ממתינים למחיקה)');
   });
 
-  it('disables uploads while saving', () => {
+  it('disables storage while saving', () => {
     const header = renderHeader('saving');
     expect(header).toContain('שומר...');
-    expect(header).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?העלאת תוכן/);
+    expect(header).toMatch(/<button[^>]*disabled=""[^>]*>[\s\S]*?אחסון/);
   });
 });

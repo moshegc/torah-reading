@@ -93,6 +93,7 @@ function AppContent() {
   // Teacher-level settings (stored in the per-teacher JSON file)
   const [teacherSettings, setTeacherSettings] = useState<TeacherSettings>({});
   const [parashaLibrary, setParashaLibrary] = useState<Record<string, RecordingItem[]>>({});
+  const [normalizationFolderTargets, setNormalizationFolderTargets] = useState<Record<string, number>>({});
   const [pendingMediaDeletes, setPendingMediaDeletes] = useState<string[]>([]);
 
   // Student share link state (?teacher=XXX&student=YYY)
@@ -129,6 +130,7 @@ function AppContent() {
     setHaftarotMap({ ...INITIAL_HAFTAROT, ...data?.haftarotMap });
     setTeacherSettings(data?.settings ?? {});
     setParashaLibrary(data?.parashaLibrary ?? {});
+    setNormalizationFolderTargets(data?.normalizationFolderTargets ?? {});
     setPendingMediaDeletes(data?.pendingMediaDeletes ?? []);
     setLastSyncedAt(data?.updatedAt ?? null);
   }, []);
@@ -507,6 +509,7 @@ function AppContent() {
         teacherToken={teacherSession.token}
         students={students}
         parashaLibrary={parashaLibrary}
+        normalizationFolderTargets={normalizationFolderTargets}
         onChangeLibrary={handleChangeLibrary}
         pendingDeletionCount={pendingMediaDeletes.length}
         defaultHaftarahTradition={teacherSettings.defaultHaftarahTradition ?? 'ashkenazi'}

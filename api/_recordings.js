@@ -3,11 +3,13 @@ export function sameRecording(a, b) {
 }
 
 export function copyFileCategory(item, source) {
-  const { section: _section, ...rest } = item;
+  const { section: _section, normalization: _normalization, normalizationKey: _normalizationKey, ...rest } = item;
   return {
     ...rest,
     category: source.category,
     ...(source.section !== undefined ? { section: source.section } : {}),
+    ...(source.normalization !== undefined ? { normalization: source.normalization } : {}),
+    ...(source.normalizationKey !== undefined ? { normalizationKey: source.normalizationKey } : {}),
   };
 }
 
@@ -16,7 +18,7 @@ export function syncStudentFileCategories(data) {
   const files = Object.values(data.parashaLibrary || {}).flat();
   const byId = new Map(files.map((item) => [item.id, item]));
   const byKey = new Map(files.filter((item) => item.r2Key).map((item) => [item.r2Key, item]));
-  return {
+  return applyNormalizationTargets({
     ...data,
     students: data.students.map((student) => ({
       ...student,
@@ -27,5 +29,6 @@ export function syncStudentFileCategories(data) {
         }),
       } : {}),
     })),
-  };
+  });
 }
+import { applyNormalizationTargets } from './_normalization.js';

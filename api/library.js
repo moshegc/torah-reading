@@ -1,6 +1,7 @@
-import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody } from './_r2.js';
+import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody, isLocalTeacherDataActive } from './_r2.js';
 import { sanitizeTeacherId, verifyTeacherToken } from './r2-auth.js';
 import { sameRecording as sameItem, copyFileCategory, syncStudentFileCategories } from './_recordings.js';
+import { applyNormalizationTargets, normalizationMetadataKey, percentileTarget, withTarget } from './_normalization.js';
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const extensions = ['aac', 'm4a', 'mp3', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
@@ -20,6 +21,23 @@ function assertOwnedKey(key, teacherId) {
   }
 }
 
+function isOwnedNormalizationKey(key, teacherId) {
+  const prefix = `teachers/${teacherId}/normalization/`;
+  return typeof key === 'string' && key.startsWith(prefix) &&
+    /^[a-f0-9]{64}\.json$/.test(key.slice(prefix.length));
+}
+
+function assertOwnedCleanupKey(key, teacherId) {
+  if (!isOwnedNormalizationKey(key, teacherId)) assertOwnedKey(key, teacherId);
+}
+
+function normalizationKeys(items, teacherId) {
+  return items.flatMap((item) => {
+    if (!item.normalization && !item.normalizationKey) return [];
+    return [...new Set([item.normalizationKey, normalizationMetadataKey(teacherId, item)].filter(Boolean))];
+  });
+}
+
 function folderName(value) {
   const name = typeof value === 'string' ? value.trim() : '';
   if (!name || ['__proto__', 'prototype', 'constructor'].includes(name)) {
@@ -35,6 +53,26 @@ function recordings(data) {
   ];
 }
 
+function validateNormalization(value) {
+  const leveling = value?.leveling;
+  const validCurve = value?.version === 2 && leveling &&
+    Number.isFinite(leveling.duration) && leveling.duration >= 0.4 && leveling.duration <= 600 &&
+    Number.isFinite(leveling.integratedLufs) && Number.isFinite(leveling.truePeakDbtp) &&
+    Array.isArray(leveling.points) && leveling.points.length >= 2 && leveling.points.length <= 602 &&
+    leveling.points[0]?.time === 0 && leveling.points.at(-1)?.time === leveling.duration &&
+    leveling.points.every((point, index, points) => point && Number.isFinite(point.time) &&
+      Number.isFinite(point.gainDb) && Math.abs(point.gainDb) <= 6 &&
+      (index === 0 || point.time > points[index - 1].time));
+  if (!value || (value.version !== 1 && !validCurve) ||
+      (value.version === 1 && leveling !== undefined) ||
+      (value.targetLufs !== undefined && !Number.isFinite(value.targetLufs)) ||
+      !Number.isFinite(value.integratedLufs) || !Number.isFinite(value.truePeakDbtp) ||
+      !Number.isFinite(value.gainDb) ||
+      Math.abs(value.gainDb - withTarget(value, value.targetLufs ?? -18).gainDb) > 0.001) {
+    throw new LibraryError('נתוני איזון העוצמה אינם תקינים');
+  }
+}
+
 function validateItem(item, teacherId) {
   if (!item || typeof item.id !== 'string' || !item.id.trim() ||
       typeof item.title !== 'string' || !item.title.trim() ||
@@ -44,14 +82,35 @@ function validateItem(item, teacherId) {
     throw new LibraryError('פרטי חומר הלימוד אינם תקינים');
   }
   assertOwnedKey(item.r2Key, teacherId);
+  if (item.normalization !== undefined) {
+    if (!['aac', 'm4a', 'mp3'].includes(item.ext)) throw new LibraryError('ניתן לנתח עוצמה רק להקלטות');
+    validateNormalization(item.normalization);
+  }
 }
 
 export function applyLibraryChange(data, change, teacherId) {
   const library = { ...data.parashaLibrary };
+  const folderTargets = { ...data.normalizationFolderTargets };
   let students = data.students || [];
   let removed = [];
   if (change.action === 'retry-deletions') return data;
   const folder = folderName(change.folder);
+  if (change.action === 'recalculate-normalization-target') {
+    if (!hasOwn(library, folder)) throw new LibraryError('התיקייה אינה קיימת', 404);
+    for (const item of library[folder]) {
+      if (item.normalization) validateNormalization(item.normalization);
+    }
+    let targetLufs;
+    try {
+      targetLufs = percentileTarget(library[folder]);
+    } catch (error) {
+      throw new LibraryError(error.message);
+    }
+    return applyNormalizationTargets({
+      ...data, normalizationFolderTargets: { ...folderTargets, [folder]: targetLufs },
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   if (change.action === 'add-student-items') {
     if (!students.some((student) => student.id === change.studentId)) {
@@ -91,6 +150,10 @@ export function applyLibraryChange(data, change, teacherId) {
       if (name !== folder) {
         library[name] = items;
         delete library[folder];
+        if (hasOwn(folderTargets, folder)) {
+          folderTargets[name] = folderTargets[folder];
+          delete folderTargets[folder];
+        }
       }
     } else if (change.action === 'move-item' || change.action === 'rename-item') {
       const target = items.find((item) => item.id === change.itemId);
@@ -114,6 +177,17 @@ export function applyLibraryChange(data, change, teacherId) {
           ...student, portions: (student.portions || []).map(rename),
         }));
       }
+    } else if (change.action === 'set-item-normalization') {
+      const target = items.find((item) => item.id === change.itemId);
+      if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
+      if (target.r2Key !== change.r2Key) throw new LibraryError('הקובץ הוחלף במהלך הניתוח. יש לנתח מחדש.', 409);
+      if (!['aac', 'm4a', 'mp3'].includes(target.ext)) throw new LibraryError('ניתן לנתח עוצמה רק להקלטות');
+      validateNormalization(change.normalization);
+      const update = (item) => sameItem(item, target) ? { ...item, normalization: change.normalization } : item;
+      for (const name of Object.keys(library)) library[name] = library[name].map(update);
+      students = students.map((student) => ({
+        ...student, portions: (student.portions || []).map(update),
+      }));
     } else if (change.action === 'set-item-section') {
       const target = items.find((item) => item.id === change.itemId);
       if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
@@ -139,6 +213,7 @@ export function applyLibraryChange(data, change, teacherId) {
     } else if (change.action === 'delete-folder') {
       removed = items;
       delete library[folder];
+      delete folderTargets[folder];
     } else if (change.action === 'delete-item' || change.action === 'replace-item') {
       const target = items.find((item) => item.id === change.itemId);
       if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
@@ -175,10 +250,18 @@ export function applyLibraryChange(data, change, teacherId) {
     }));
   }
 
-  const next = syncStudentFileCategories({ ...data, students, parashaLibrary: library, updatedAt: new Date().toISOString() });
+  const next = syncStudentFileCategories({
+    ...data, students, parashaLibrary: library,
+    ...(data.normalizationFolderTargets !== undefined ? { normalizationFolderTargets: folderTargets } : {}),
+    updatedAt: new Date().toISOString(),
+  });
   const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
-  next.pendingMediaDeletes = [...new Set(removed.map((item) => item.r2Key).filter((key) => key && !retainedKeys.has(key)))];
-  for (const key of next.pendingMediaDeletes) assertOwnedKey(key, teacherId);
+  const retainedNormalization = new Set(normalizationKeys(recordings(next), teacherId));
+  next.pendingMediaDeletes = [...new Set([
+    ...removed.map((item) => item.r2Key).filter((key) => key && !retainedKeys.has(key)),
+    ...normalizationKeys(removed, teacherId).filter((key) => !retainedNormalization.has(key)),
+  ])];
+  for (const key of next.pendingMediaDeletes) assertOwnedCleanupKey(key, teacherId);
   return next;
 }
 
@@ -214,9 +297,17 @@ export default async function handler(req, res) {
     if (next.pendingMediaDeletes?.length) {
       try {
         const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
+        const retainedNormalization = new Set(normalizationKeys(recordings(next), teacherId));
         for (const key of next.pendingMediaDeletes) {
-          assertOwnedKey(key, teacherId);
-          if (!retainedKeys.has(key)) await r2DeleteObject(key);
+          assertOwnedCleanupKey(key, teacherId);
+          const isNormalization = isOwnedNormalizationKey(key, teacherId);
+          if (!retainedKeys.has(key) && !retainedNormalization.has(key)) {
+            if (!isNormalization && isLocalTeacherDataActive(teacherId)) {
+              console.warn(`[LOCAL TEACHER CONFIG] Skipping R2 object deletion for hosted asset: ${key}`);
+            } else {
+              await r2DeleteObject(key);
+            }
+          }
         }
         const completed = { ...next, pendingMediaDeletes: [], updatedAt: new Date().toISOString() };
         await r2PutJson(dataKey, completed);

@@ -27,6 +27,8 @@ import {
   VoicePitchGraph,
 } from '../utils/voicePitchShifter';
 import { TorahTextViewer } from './TorahTextViewer';
+import { formatGainDb, gainDbToLinear, levelingGainAt, normalizationGain, PEAK_CEILING_DBTP } from '../audio/normalization';
+import { RecordingGainDetails } from './RecordingGainDetails';
 
 interface AudioPlayerBarProps {
   recording: RecordingItem | null;
@@ -91,6 +93,58 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     pitchSetting.studentId === studentId && pitchSetting.recordingId === recording?.id
       ? pitchSetting.value
       : savedPitch;
+  const scanGain = useMemo(() => {
+    try {
+      normalizationGain(recording?.normalization);
+      return { gainDb: recording?.normalization?.gainDb ?? 0, error: null };
+    } catch (error) {
+      return { gainDb: 0, error: error instanceof Error ? error.message : 'נתוני הסריקה אינם תקינים' };
+    }
+  }, [recording?.normalization]);
+  const gainSelectionKey = JSON.stringify([
+    studentId, recording?.id, recording ? getMediaStreamUrl(recording) : null, recording?.normalization,
+  ]);
+  const [gainSetting, setGainSetting] = useState<{ key: string; gainDb: number | null }>({
+    key: gainSelectionKey, gainDb: null,
+  });
+  const [appliedGain, setAppliedGain] = useState<{ key: string; gainDb: number } | null>(null);
+  const manualGainDb = gainSetting.key === gainSelectionKey ? gainSetting.gainDb : null;
+  const manualGain = manualGainDb !== null;
+  const gainDb = manualGainDb ?? scanGain.gainDb;
+  const minimumGainDb = Math.min(-24, Math.floor(scanGain.gainDb));
+  const leveling = !manualGain && !scanGain.error ? recording?.normalization?.leveling : undefined;
+  const currentGainDb = gainDb + (leveling ? levelingGainAt(leveling.points, currentTime) : 0);
+  const predictedPeak = recording?.normalization && !scanGain.error
+    ? (leveling?.truePeakDbtp ?? recording.normalization.truePeakDbtp) + gainDb : null;
+  const playbackSettings = {
+    pitchShift, gainDb, key: gainSelectionKey, recordingId: recording?.id,
+    title: recording?.title, scanGainDb: scanGain.gainDb, manualGain, leveling,
+  };
+  const playbackSettingsRef = useRef(playbackSettings);
+  playbackSettingsRef.current = playbackSettings;
+  const lastTimelinePositionRef = useRef(0);
+  const syncGainTimeline = useCallback(() => {
+    const graph = pitchGraphRef.current;
+    const audio = audioRef.current;
+    if (!graph || !audio) return;
+    const settings = playbackSettingsRef.current;
+    if (settings.leveling) {
+      graph.setGainEnvelope(settings.gainDb, settings.leveling.points,
+        audio.currentTime, audio.playbackRate, !audio.paused && !audio.seeking);
+    } else {
+      graph.setGain(gainDbToLinear(settings.gainDb));
+    }
+    lastTimelinePositionRef.current = audio.currentTime;
+  }, []);
+
+  useEffect(() => {
+    setGainSetting({ key: gainSelectionKey, gainDb: null });
+    console.info('[audio-gain] recording selected', {
+      recordingId: recording?.id, title: recording?.title,
+      scan: recording?.normalization ?? null, scanError: scanGain.error,
+      initialGainDb: scanGain.gainDb,
+    });
+  }, [gainSelectionKey]);
 
   const hasSefariaText =
     !hideText &&
@@ -122,27 +176,45 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     }
   }, [studentId]);
 
-  // Lazily connect the <audio> element to the PSOLA voice pitch worklet when pitchShift !== 0
-  const ensurePitchGraph = useCallback(async (targetPitch: number) => {
+  const ensurePitchGraph = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    // If pitch is 0 and we haven't attached Web Audio yet, keep native direct playback
-    if (targetPitch === 0 && !pitchGraphRef.current) {
+    if (playbackSettingsRef.current.pitchShift === 0 &&
+        playbackSettingsRef.current.gainDb === 0 && !playbackSettingsRef.current.leveling && !pitchGraphRef.current) {
+      const settings = playbackSettingsRef.current;
+      setAppliedGain({ key: settings.key, gainDb: 0 });
+      console.info('[audio-gain] native playback (unity gain)', {
+        recordingId: settings.recordingId, title: settings.title, gainDb: 0, linearGain: 1,
+      });
       return;
     }
+
+    const applySettings = async (graph: VoicePitchGraph) => {
+      if (audioRef.current !== audio) return;
+      const settings = playbackSettingsRef.current;
+      const linearGain = gainDbToLinear(settings.gainDb);
+      syncGainTimeline();
+      setAppliedGain({ key: settings.key, gainDb: settings.gainDb });
+      console.info('[audio-gain] playback gain applied', {
+        recordingId: settings.recordingId, title: settings.title,
+        scanGainDb: settings.scanGainDb, gainDb: settings.gainDb, linearGain,
+        manual: settings.manualGain, contextState: graph.context.state,
+      });
+      await graph.setPitchSemitones(settings.pitchShift);
+    };
 
     try {
       if (pitchGraphRef.current && attachedAudioElRef.current === audio) {
         if (pitchGraphRef.current.context.state === 'suspended') {
           await pitchGraphRef.current.context.resume();
         }
-        pitchGraphRef.current.setPitchSemitones(targetPitch);
+        await applySettings(pitchGraphRef.current);
         return;
       }
 
       if (!graphInitPromiseRef.current) {
-        graphInitPromiseRef.current = createVoicePitchGraph(audio, targetPitch)
+        graphInitPromiseRef.current = createVoicePitchGraph(audio, 0)
           .then((graph) => {
             if (audioRef.current !== audio) {
               graph.dispose();
@@ -159,21 +231,30 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
 
       const graph = await graphInitPromiseRef.current;
       if (graph) {
-        graph.setPitchSemitones(targetPitch);
+        if (graph.context.state === 'suspended') await graph.context.resume();
+        await applySettings(graph);
       }
     } catch (err) {
+      pitchGraphRef.current?.setGain(1);
+      setAppliedGain({ key: playbackSettingsRef.current.key, gainDb: 0 });
       console.warn('Voice pitch graph initialization warning:', err);
+      setErrorMsg('לא ניתן להחיל את איזון העוצמה או שינוי הסולם. נסו שוב.');
     }
-  }, []);
+  }, [syncGainTimeline]);
 
-  // Sync changes to pitchShift into the PSOLA voice pitch worklet
   useEffect(() => {
-    if (pitchShift !== 0 || pitchGraphRef.current) {
-      ensurePitchGraph(pitchShift);
-    }
-  }, [pitchShift, ensurePitchGraph]);
+    ensurePitchGraph();
+  }, [pitchShift, gainDb, gainSelectionKey, ensurePitchGraph]);
 
   // Cleanup graph on unmount
+  useEffect(() => {
+    if (!recording) {
+      pitchGraphRef.current?.dispose();
+      pitchGraphRef.current = null;
+      attachedAudioElRef.current = null;
+    }
+  }, [Boolean(recording)]);
+
   useEffect(() => {
     return () => {
       if (pitchGraphRef.current) {
@@ -189,6 +270,20 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       setPitchSetting({ studentId, recordingId: recording.id, value: clamped });
       saveRecordingPitch(studentId, recording.id, clamped);
     }
+  };
+
+  const updateGain = (nextGainDb: number | null) => {
+    if (nextGainDb !== null && !Number.isFinite(nextGainDb)) {
+      console.error('[audio-gain] invalid manual gain', { nextGainDb });
+      setErrorMsg('תיקון העוצמה אינו תקין');
+      return;
+    }
+    const value = nextGainDb === null ? null : Math.max(minimumGainDb, Math.min(12, nextGainDb));
+    console.info('[audio-gain] manual gain changed', {
+      recordingId: recording?.id, title: recording?.title,
+      scanGainDb: scanGain.gainDb, gainDb: value ?? scanGain.gainDb, resetToScan: value === null,
+    });
+    setGainSetting({ key: gainSelectionKey, gainDb: value });
   };
 
   useEffect(() => {
@@ -213,9 +308,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
     audio.load();
 
     const startPlayback = async () => {
-      if (pitchShift !== 0 || pitchGraphRef.current) {
-        await ensurePitchGraph(pitchShift);
-      }
+      await ensurePitchGraph();
       if (cancelled) return;
       await audio.play();
       if (cancelled) {
@@ -249,9 +342,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
       setIsPlaying(false);
     } else {
       setErrorMsg(null);
-      if (pitchShift !== 0 || pitchGraphRef.current) {
-        await ensurePitchGraph(pitchShift);
-      }
+      await ensurePitchGraph();
       if (audioRef.current !== audio) return;
       audio
         .play()
@@ -316,7 +407,7 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
   }
 
   return (
-    <div className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] px-4 py-3">
+    <div className="fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-8px_30px_rgb(0,0,0,0.08)] px-4 py-3 max-h-[90dvh] overflow-y-auto">
       <audio
         ref={audioRef}
         crossOrigin="anonymous"
@@ -325,13 +416,31 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
           setDuration(e.currentTarget.duration || 0);
           setIsLoading(false);
         }}
-        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime || 0)}
-        onWaiting={() => setIsLoading(true)}
+        onTimeUpdate={(e) => {
+          const position = e.currentTarget.currentTime || 0;
+          if (position < lastTimelinePositionRef.current) syncGainTimeline();
+          lastTimelinePositionRef.current = position;
+          setCurrentTime(position);
+        }}
+        onSeeking={syncGainTimeline}
+        onSeeked={syncGainTimeline}
+        onRateChange={syncGainTimeline}
+        onWaiting={() => {
+          setIsLoading(true);
+          const graph = pitchGraphRef.current;
+          const audio = audioRef.current;
+          const settings = playbackSettingsRef.current;
+          if (graph && audio && settings.leveling) {
+            graph.setGainEnvelope(settings.gainDb, settings.leveling.points,
+              audio.currentTime, audio.playbackRate, false);
+          }
+        }}
         onPlaying={() => {
           setIsLoading(false);
           setIsPlaying(true);
+          syncGainTimeline();
         }}
-        onPause={() => setIsPlaying(false)}
+        onPause={() => { setIsPlaying(false); syncGainTimeline(); }}
         onEnded={() => {
           if (!isLooping) {
             setIsPlaying(false);
@@ -429,6 +538,11 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             <span>{errorMsg}</span>
           </div>
         )}
+        {scanGain.error && (
+          <div role="alert" className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-2.5 py-1.5">
+            {scanGain.error}
+          </div>
+        )}
 
         {/* Expandable Pitch Shift Drawer */}
         {showPitchPanel && (
@@ -498,6 +612,51 @@ export const AudioPlayerBar: React.FC<AudioPlayerBarProps> = ({
             </div>
           </div>
         )}
+
+        {import.meta.env.VITE_AUDIO_GAIN_DEBUG === 'true' && <details className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs" dir="rtl">
+          <summary className="cursor-pointer font-bold text-slate-800">
+            עוצמה: <bdi>{formatGainDb(gainDb)}</bdi>
+            {' · '}{manualGain ? 'ידני' : recording.normalization && !scanGain.error ? 'לפי סריקה' : 'ללא תיקון'}
+            {' · '}סריקה: <bdi>{scanGain.error ? 'לא תקינה' : recording.normalization ? formatGainDb(scanGain.gainDb) : 'טרם נסרק'}</bdi>
+          </summary>
+          <div className="pt-3 space-y-2">
+            <RecordingGainDetails normalization={recording.normalization} />
+            {leveling && <p className="text-indigo-700">איזון משתנה פעיל · תיקון ברגע זה: <bdi>{formatGainDb(currentGainDb)}</bdi>. שליטה ידנית מחליפה את האיזון המשתנה.</p>}
+            <label className="block font-semibold">
+              תיקון עוצמה ידני: <bdi>{formatGainDb(gainDb)}</bdi>
+              <input
+                type="range"
+                aria-label="תיקון עוצמה ידני"
+                min={minimumGainDb}
+                max={12}
+                step="any"
+                value={gainDb}
+                onChange={(event) => updateGain(Number(event.target.value))}
+                className="block w-full mt-2 accent-indigo-600"
+                dir="ltr"
+              />
+            </label>
+            <div className="flex justify-between text-slate-500" dir="ltr">
+              <span>{minimumGainDb} dB</span><span>0 dB</span><span>+12 dB</span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={() => updateGain(null)} className="font-bold text-indigo-700 underline">חזרה לתוצאת הסריקה</button>
+              <button type="button" onClick={() => updateGain(0)} className="font-bold text-indigo-700 underline">ללא תיקון (0 dB)</button>
+            </div>
+            <p>
+              הוחל בפועל: <bdi>{appliedGain?.key === gainSelectionKey ? formatGainDb(leveling ? currentGainDb : appliedGain.gainDb) : 'טרם הוחל'}</bdi>
+              {' · '}מכפיל מבוקש: <bdi>{gainDbToLinear(currentGainDb).toFixed(3)}×</bdi>
+              {predictedPeak !== null && <> · פסגה צפויה: <bdi>{predictedPeak.toFixed(1)} dBTP</bdi></>}
+            </p>
+            {((manualGain && gainDb > scanGain.gainDb) || (predictedPeak !== null && predictedPeak > PEAK_CEILING_DBTP)) && (
+              <p role="alert" className="text-amber-800 bg-amber-50 p-2 rounded-lg">
+                העוצמה מעל ההמלצה או מרווח הפסגות של הסריקה. תיתכן חריגה או עיוות (Clipping), במיוחד בשינוי סולם.
+              </p>
+            )}
+            {!recording.normalization && gainDb > 0 && <p className="text-amber-800">אין מדידת פסגות לקובץ זה; הגברה ידנית עלולה לגרום לעיוות.</p>}
+            <p className="text-slate-500">השינוי הידני זמני ומתאפס בבחירת הקלטה. הפסגות מחושבות לפני שינוי סולם ומהירות, ללא לימיטר.</p>
+          </div>
+        </details>}
 
         {/* Scrubber Bar */}
         <div className="flex items-center gap-2.5" dir="ltr">

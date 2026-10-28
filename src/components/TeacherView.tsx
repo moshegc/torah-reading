@@ -35,6 +35,7 @@ import type { StudentProfile, RecordingItem, RecordingSection, LibraryChange } f
 import { getRecordingSection, isDocument, RECORDING_SECTION_LABELS, sortRecordings, withRecordingSection } from '../utils/recordings';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
 import { RecordingFileIcon } from './RecordingFileIcon';
+import { RecordingGainDetails } from './RecordingGainDetails';
 import { PARASHA_OPTIONS } from '../data/parashaOptions';
 import { getHaftarahVerses } from '../data/haftarahOptions';
 import { getVerseReadingById } from '../utils/verseCounts';
@@ -80,6 +81,7 @@ interface TeacherViewProps {
   teacherToken: string;
   students: StudentProfile[];
   parashaLibrary?: Record<string, RecordingItem[]>;
+  normalizationFolderTargets?: Record<string, number>;
   onChangeLibrary: (change: LibraryChange) => Promise<boolean>;
   pendingDeletionCount: number;
   defaultHaftarahTradition?: HaftarahTradition;
@@ -112,6 +114,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   teacherToken,
   students,
   parashaLibrary = {},
+  normalizationFolderTargets = {},
   onChangeLibrary,
   pendingDeletionCount,
   defaultHaftarahTradition = 'ashkenazi',
@@ -242,6 +245,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [localFileName, setLocalFileName] = useState('');
   const [localMimeType, setLocalMimeType] = useState('audio/aac');
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [normalizeAudio, setNormalizeAudio] = useState(true);
   const [studentUploadFolder, setStudentUploadFolder] = useState('');
   const [studentLibraryFolder, setStudentLibraryFolder] = useState('');
   const [selectedLibraryIds, setSelectedLibraryIds] = useState<string[]>([]);
@@ -455,6 +459,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           mimeType: localMimeType,
           ext: singleExt,
           base64Data: localDataUrl,
+          normalizeAudio,
+          onStatus: setFolderLoadMsg,
         });
 
         const r2Portion: RecordingItem = {
@@ -467,6 +473,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           r2Url: uploaded.r2Url,
           viewUrl: uploaded.viewUrl,
           visible: true,
+          normalization: uploaded.normalization,
         };
 
         await saveStudentItems([r2Portion]);
@@ -686,8 +693,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 disabled={syncStatus === 'saving'}
                 className="px-2 sm:px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-bold flex items-center gap-1.5"
               >
-                <CloudUpload className="hidden min-[360px]:block w-4 h-4 shrink-0" />
-                <span>העלאת תוכן</span>
+                <HardDrive className="hidden min-[360px]:block w-4 h-4 shrink-0" />
+                <span>אחסון</span>
                 {pendingDeletionCount > 0 && <span className="text-amber-200 text-xs">({pendingDeletionCount} ממתינים למחיקה)</span>}
               </button>
               {onSetDefaultHaftarahTradition && (
@@ -1889,6 +1896,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <input
                     type="text"
                     value={singleLinkInput}
+                    disabled={isUploadingAudio}
                     onChange={(e) => setSingleLinkInput(e.target.value)}
                     placeholder="הדבק קישור לקובץ ב-Google Drive..."
                     className="flex-1 min-w-[200px] bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs"
@@ -1900,6 +1908,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                       type="file"
                       accept="audio/*,.aac,.m4a,.mp3,.pdf"
                       onChange={handleLocalFilePick}
+                      disabled={isUploadingAudio}
                       className="hidden"
                     />
                   </label>
@@ -1921,6 +1930,17 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     )}
                   </button>
                 </div>
+                <label className="flex items-center gap-2 text-xs text-slate-700">
+                  <input type="checkbox" checked={normalizeAudio} disabled={isUploadingAudio} onChange={(event) => setNormalizeAudio(event.target.checked)} />
+                  נתח ואזן עוצמה לפני העלאת קובץ מהמכשיר (סריקה ב-24kHz; עד 16MB ו-10 דקות)
+                </label>
+                <p className="text-xs text-slate-500">הקובץ המקורי נשמר ללא שינוי. הקלטות שיובאו מ-Drive ניתן לנתח במאגר חומרי הלימוד.</p>
+                {folderLoadMsg && (
+                  <p role={isUploadingAudio ? 'status' : 'alert'} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${isUploadingAudio ? 'bg-indigo-50 text-indigo-800' : 'bg-slate-100 text-slate-800'}`}>
+                    {isUploadingAudio && <Loader2 className="w-4 h-4 animate-spin shrink-0" />}
+                    {folderLoadMsg}
+                  </p>
+                )}
               </form>
               </section>
 
@@ -2055,6 +2075,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </div>
+                          {!isDocument(rec) && <div className="w-full"><RecordingGainDetails normalization={rec.normalization} /></div>}
                         </div>
                       );
                     })}
@@ -2395,6 +2416,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           teacherId={teacherId}
           teacherToken={teacherToken}
           library={parashaLibrary}
+          normalizationFolderTargets={normalizationFolderTargets}
           pendingDeletionCount={pendingDeletionCount}
           operationError={syncErrorMessage}
           onChange={onChangeLibrary}
@@ -2559,7 +2581,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       )}
 
       <AudioPlayerBar
-        recording={previewRecording}
+        recording={previewRecording
+          ? managingStudent?.portions.find((item) => item.id === previewRecording.id) ??
+            Object.values(parashaLibrary).flat().find((item) => item.id === previewRecording.id ||
+              Boolean(item.r2Key && item.r2Key === previewRecording.r2Key)) ?? previewRecording
+          : null}
         onClose={() => setPreviewRecording(null)}
         parashaName={managingStudent?.parasha}
         haftarahName={managingStudent?.haftarah}

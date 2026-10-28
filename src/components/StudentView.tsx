@@ -805,7 +805,9 @@ export const StudentView: React.FC<StudentViewProps> = ({
       )}
 
       <AudioPlayerBar
-        recording={selectedRecording}
+        recording={selectedRecording
+          ? student.portions.find((item) => item.id === selectedRecording.id) ?? selectedRecording
+          : null}
         onClose={() => setSelectedRecording(null)}
         parashaName={
           activeTab === 'general' ? 'ברכות וטעמים' : `פרשת ${student.parasha}`

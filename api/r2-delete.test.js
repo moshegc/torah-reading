@@ -52,4 +52,32 @@ describe('stored media deletion', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
     await expect(r2DeleteObject('media/teacher/library/file.mp3')).rejects.toThrow('503');
   });
+
+  it('deletes teacher-local normalization data without touching hosted storage', async () => {
+    vi.stubEnv('LOCAL_TEACHER_DATA_FILE', 'teacher-test.json');
+    for (const key of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']) vi.stubEnv(key, 'test');
+    vi.stubGlobal('fetch', vi.fn());
+    const hash = 'a'.repeat(64);
+    await r2DeleteObject(`teachers/teacher/normalization/${hash}.json`);
+    expect(fs.unlink).toHaveBeenCalledOnce();
+    expect(fs.unlink.mock.calls[0][0]).toContain(`teacher-test.json.normalization`);
+    expect(fs.unlink.mock.calls[0][0]).toContain(`${hash}.json`);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('surfaces local normalization deletion failures', async () => {
+    vi.stubEnv('LOCAL_TEACHER_DATA_FILE', 'teacher-test.json');
+    fs.unlink.mockRejectedValueOnce(Object.assign(new Error('Permission denied'), { code: 'EPERM' }));
+    await expect(r2DeleteObject(`teachers/teacher/normalization/${'a'.repeat(64)}.json`)).rejects.toThrow('Permission denied');
+  });
+
+  it('deletes hosted normalization metadata and accepts an already-deleted object', async () => {
+    vi.stubEnv('LOCAL_TEACHER_DATA_FILE', '');
+    vi.stubEnv('USE_LOCAL_TEACHER_DATA', 'false');
+    for (const key of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']) vi.stubEnv(key, 'test');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+    const key = `teachers/teacher/normalization/${'a'.repeat(64)}.json`;
+    await expect(r2DeleteObject(key)).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining(key), expect.objectContaining({ method: 'DELETE' }));
+  });
 });

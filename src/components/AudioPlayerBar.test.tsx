@@ -6,7 +6,34 @@ import type { RecordingItem } from '../types';
 
 vi.mock('./TorahTextViewer', () => ({ TorahTextViewer: () => null }));
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+describe('audio gain diagnostics', () => {
+  const recording: RecordingItem = {
+    id: 'gain', aliyah: 'הקלטה', title: 'gain.mp3',
+    category: 'shabbat', ext: 'mp3', viewUrl: '/audio',
+    normalization: { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 },
+  };
+
+  it.each([[undefined, false], ['false', false], ['true', true]])('renders diagnostics only when enabled (%s)', (flag, enabled) => {
+    vi.stubEnv('VITE_AUDIO_GAIN_DEBUG', flag);
+    const html = renderToStaticMarkup(<AudioPlayerBar recording={recording} onClose={vi.fn()} />);
+    expect(html.includes('תיקון עוצמה ידני')).toBe(enabled);
+    expect(html.includes('תוצאת סריקה:')).toBe(enabled);
+    expect(html).toContain('<audio');
+  });
+
+  it('still reports invalid scan data with diagnostics disabled', () => {
+    vi.stubEnv('VITE_AUDIO_GAIN_DEBUG', 'false');
+    const invalid = { ...recording, normalization: { ...recording.normalization!, gainDb: 99 } };
+    const html = renderToStaticMarkup(<AudioPlayerBar recording={invalid} onClose={vi.fn()} />);
+    expect(html).toContain('נתוני איזון העוצמה אינם תקינים');
+    expect(html).toContain('role="alert"');
+  });
+});
 
 describe('auto-play checkbox', () => {
   const recording: RecordingItem = {
@@ -34,6 +61,7 @@ describe('recording completion', () => {
     vi.stubGlobal('localStorage', {
       getItem: () => JSON.stringify({ isLooping }),
     });
+
     const onEnded = vi.fn();
     const recording: RecordingItem = {
       id: 'first', aliyah: 'עליית ראשון', title: 'first.mp3',
