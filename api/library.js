@@ -1,6 +1,7 @@
 import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody, isLocalTeacherDataActive } from './_r2.js';
 import { sanitizeTeacherId, verifyTeacherToken } from './r2-auth.js';
 import { sameRecording as sameItem, copyFileCategory, syncStudentFileCategories } from './_recordings.js';
+import { applyNormalizationTargets, percentileTarget, withTarget } from './_normalization.js';
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const extensions = ['aac', 'm4a', 'mp3', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
@@ -36,10 +37,21 @@ function recordings(data) {
 }
 
 function validateNormalization(value) {
-  if (!value || value.version !== 1 ||
+  const leveling = value?.leveling;
+  const validCurve = value?.version === 2 && leveling &&
+    Number.isFinite(leveling.duration) && leveling.duration >= 0.4 && leveling.duration <= 600 &&
+    Number.isFinite(leveling.integratedLufs) && Number.isFinite(leveling.truePeakDbtp) &&
+    Array.isArray(leveling.points) && leveling.points.length >= 2 && leveling.points.length <= 602 &&
+    leveling.points[0]?.time === 0 && leveling.points.at(-1)?.time === leveling.duration &&
+    leveling.points.every((point, index, points) => point && Number.isFinite(point.time) &&
+      Number.isFinite(point.gainDb) && Math.abs(point.gainDb) <= 6 &&
+      (index === 0 || point.time > points[index - 1].time));
+  if (!value || (value.version !== 1 && !validCurve) ||
+      (value.version === 1 && leveling !== undefined) ||
+      (value.targetLufs !== undefined && !Number.isFinite(value.targetLufs)) ||
       !Number.isFinite(value.integratedLufs) || !Number.isFinite(value.truePeakDbtp) ||
       !Number.isFinite(value.gainDb) ||
-      Math.abs(value.gainDb - Math.min(-18 - value.integratedLufs, -2 - value.truePeakDbtp, 12)) > 0.001) {
+      Math.abs(value.gainDb - withTarget(value, value.targetLufs ?? -18).gainDb) > 0.001) {
     throw new LibraryError('נתוני איזון העוצמה אינם תקינים');
   }
 }
@@ -61,10 +73,27 @@ function validateItem(item, teacherId) {
 
 export function applyLibraryChange(data, change, teacherId) {
   const library = { ...data.parashaLibrary };
+  const folderTargets = { ...data.normalizationFolderTargets };
   let students = data.students || [];
   let removed = [];
   if (change.action === 'retry-deletions') return data;
   const folder = folderName(change.folder);
+  if (change.action === 'recalculate-normalization-target') {
+    if (!hasOwn(library, folder)) throw new LibraryError('התיקייה אינה קיימת', 404);
+    for (const item of library[folder]) {
+      if (item.normalization) validateNormalization(item.normalization);
+    }
+    let targetLufs;
+    try {
+      targetLufs = percentileTarget(library[folder]);
+    } catch (error) {
+      throw new LibraryError(error.message);
+    }
+    return applyNormalizationTargets({
+      ...data, normalizationFolderTargets: { ...folderTargets, [folder]: targetLufs },
+      updatedAt: new Date().toISOString(),
+    });
+  }
 
   if (change.action === 'add-student-items') {
     if (!students.some((student) => student.id === change.studentId)) {
@@ -104,6 +133,10 @@ export function applyLibraryChange(data, change, teacherId) {
       if (name !== folder) {
         library[name] = items;
         delete library[folder];
+        if (hasOwn(folderTargets, folder)) {
+          folderTargets[name] = folderTargets[folder];
+          delete folderTargets[folder];
+        }
       }
     } else if (change.action === 'move-item' || change.action === 'rename-item') {
       const target = items.find((item) => item.id === change.itemId);
@@ -163,6 +196,7 @@ export function applyLibraryChange(data, change, teacherId) {
     } else if (change.action === 'delete-folder') {
       removed = items;
       delete library[folder];
+      delete folderTargets[folder];
     } else if (change.action === 'delete-item' || change.action === 'replace-item') {
       const target = items.find((item) => item.id === change.itemId);
       if (!target) throw new LibraryError('חומר הלימוד אינו קיים בתיקייה', 404);
@@ -199,7 +233,11 @@ export function applyLibraryChange(data, change, teacherId) {
     }));
   }
 
-  const next = syncStudentFileCategories({ ...data, students, parashaLibrary: library, updatedAt: new Date().toISOString() });
+  const next = syncStudentFileCategories({
+    ...data, students, parashaLibrary: library,
+    ...(data.normalizationFolderTargets !== undefined ? { normalizationFolderTargets: folderTargets } : {}),
+    updatedAt: new Date().toISOString(),
+  });
   const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
   next.pendingMediaDeletes = [...new Set(removed.map((item) => item.r2Key).filter((key) => key && !retainedKeys.has(key)))];
   for (const key of next.pendingMediaDeletes) assertOwnedKey(key, teacherId);

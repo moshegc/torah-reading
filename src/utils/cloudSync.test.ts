@@ -43,7 +43,7 @@ describe('upload loudness analysis', () => {
     vi.mocked(analyzeUpload).mockResolvedValue(normalization);
     const onStatus = vi.fn();
     const result = await uploadLocalFileToR2({ ...params, onStatus });
-    expect(analyzeUpload).toHaveBeenCalledWith(blob);
+    expect(analyzeUpload).toHaveBeenCalledWith(blob, params.fileName);
     expect(result.normalization).toEqual(normalization);
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(params);
     expect(onStatus).toHaveBeenNthCalledWith(1, 'מנתח עוצמת הקלטה...');

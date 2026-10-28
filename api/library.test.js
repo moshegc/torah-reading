@@ -71,6 +71,41 @@ beforeEach(() => {
 describe('library changes', () => {
   const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
 
+  it('chooses the folder percentile independently and applies each student’s parsha target to all assigned audio', () => {
+    const outlier = { ...recording, normalization: { version: 1, integratedLufs: -52, truePeakDbtp: -30, gainDb: 12 } };
+    const normal = Array.from({ length: 10 }, (_, index) => ({
+      ...recording, id: `normal-${index}`, r2Key: `media/teacher/library/${index}.mp3`, normalization,
+    }));
+    const next = applyLibraryChange({
+      students: [
+        { id: 'student', parasha: 'first', portions: [{ ...normal[0], visible: false }] },
+        { id: 'other-student', parasha: 'second', portions: [normal[0]] },
+      ],
+      normalizationFolderTargets: { second: -30 },
+      parashaLibrary: {
+        first: [outlier, ...normal, { ...outlier, id: 'alias' }],
+        second: [{ ...normal[0], id: 'shared' }, {
+          ...outlier, id: 'other-outlier', r2Key: 'media/teacher/library/other.mp3',
+          normalization: { version: 1, integratedLufs: -80, truePeakDbtp: -30, gainDb: 12 },
+        }],
+      },
+    }, { action: 'recalculate-normalization-target', folder: 'first' }, 'teacher');
+    expect(next.normalizationFolderTargets).toEqual({ first: -18, second: -30 });
+    expect(next).not.toHaveProperty('normalizationTargetLufs');
+    expect(next.students[0].portions[0]).toMatchObject({ visible: false, normalization: { targetLufs: -18, gainDb: 6 } });
+    expect(next.students[1].portions[0].normalization).toMatchObject({ targetLufs: -30, gainDb: -6 });
+    expect(next.parashaLibrary.first[1].normalization.gainDb).toBe(6);
+    expect(next.parashaLibrary.second[0].normalization.gainDb).toBe(-6);
+    const recalculated = applyLibraryChange(next, {
+      action: 'recalculate-normalization-target', folder: 'second',
+    }, 'teacher');
+    expect(recalculated.normalizationFolderTargets).toEqual({ first: -18, second: -68 });
+    expect(recalculated.students[0].portions[0].normalization.gainDb).toBe(6);
+    expect(() => applyLibraryChange(next, {
+      action: 'recalculate-normalization-target', folder: 'missing',
+    }, 'teacher')).toThrow('התיקייה אינה קיימת');
+  });
+
   it('saves normalization for matching files in every folder and student without changing visibility', () => {
     const data = fixture();
     data.parashaLibrary.shared = [{ ...recording, id: 'alias' }];
@@ -304,17 +339,20 @@ describe('library changes', () => {
   });
 
   it('deletes the last folder and removes its assignments without recreating defaults', () => {
-    const data = { ...fixture(), parashaLibrary: { 'בראשית': [recording] } };
+    const data = { ...fixture(), parashaLibrary: { 'בראשית': [recording] }, normalizationFolderTargets: { 'בראשית': -20 } };
     const next = applyLibraryChange(data, { action: 'delete-folder', folder: 'בראשית' }, 'teacher');
     expect(next.parashaLibrary).toEqual({});
+    expect(next.normalizationFolderTargets).toEqual({});
     expect(next.students[0].portions).toEqual([document]);
     expect(next.students[1].portions).toEqual([]);
     expect(next.pendingMediaDeletes).toEqual([recording.r2Key]);
   });
 
   it('deletes a document while keeping the folder and other student assignments', () => {
-    const next = applyLibraryChange(fixture(), { action: 'delete-item', folder: 'כללי', itemId: document.id }, 'teacher');
+    const data = { ...fixture(), normalizationFolderTargets: { 'כללי': -20 } };
+    const next = applyLibraryChange(data, { action: 'delete-item', folder: 'כללי', itemId: document.id }, 'teacher');
     expect(next.parashaLibrary['כללי']).toEqual([]);
+    expect(next.normalizationFolderTargets).toEqual({ 'כללי': -20 });
     expect(next.students[0].portions).toEqual([{ ...recording, visible: true }]);
     expect(next.pendingMediaDeletes).toEqual([document.r2Key]);
   });

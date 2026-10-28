@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { allRecordings, applyNormalizationTargets, mapRecordings, recordingKey, withTarget } from './_normalization.js';
 
 const LOCAL_R2_DIR = path.resolve(process.cwd(), '.r2-local');
 
@@ -180,6 +181,66 @@ export async function r2GetJsonFromR2(key) {
 }
 
 export async function r2GetJson(key) {
+  const data = await getJson(key);
+  if (!/^teachers\/[^/]+\/data\.json$/.test(key) || !data) return data;
+  const libraryKey = key.replace(/data\.json$/, 'library.json');
+  let combined = data;
+  if (data.libraryKey) {
+    if (data.libraryKey !== libraryKey) throw new Error('Invalid library index reference');
+    const index = await getJson(libraryKey);
+    if (!index || index.version !== 1 || !index.folders) throw new Error('Missing or invalid library index');
+    combined = { ...data, parashaLibrary: index.folders };
+    if (index.normalizationFolderTargets !== undefined) {
+      combined.normalizationFolderTargets = index.normalizationFolderTargets;
+    }
+    if (Number.isFinite(index.normalizationTargetLufs)) {
+      combined.normalizationTargetLufs = index.normalizationTargetLufs;
+    }
+  }
+  const metadataKeys = [...new Set(allRecordings(combined).map((item) => item.normalizationKey).filter(Boolean))];
+  const metadata = new Map();
+  for (let offset = 0; offset < metadataKeys.length; offset += 8) {
+    await Promise.all(metadataKeys.slice(offset, offset + 8).map(async (metadataKey) => {
+      const prefix = key.replace(/data\.json$/, 'normalization/');
+      if (typeof metadataKey !== 'string' || !metadataKey.startsWith(prefix) ||
+          !/^[a-f0-9]{64}\.json$/.test(metadataKey.slice(prefix.length))) {
+        throw new Error('Invalid normalization metadata reference');
+      }
+      const document = await getJson(metadataKey);
+      if (!document || document.version !== 1 || !document.normalization) {
+        throw new Error('Missing or invalid normalization metadata');
+      }
+      metadata.set(metadataKey, document.normalization);
+    }));
+  }
+  return applyNormalizationTargets(mapRecordings(combined, (item) => {
+    const normalization = item.normalizationKey ? metadata.get(item.normalizationKey) : item.normalization;
+    return normalization
+      ? { ...item, normalization } : item;
+  }));
+}
+
+async function getJson(key) {
+  const ancillaryMatch = key.match(/^teachers\/([^/]+)\/(library\.json|normalization\/[a-f0-9]{64}\.json)$/);
+  if (ancillaryMatch) {
+    const teacherPath = getLocalTeacherDataPath(ancillaryMatch[1]);
+    if (teacherPath) {
+      const localPath = ancillaryMatch[2] === 'library.json' ? `${teacherPath}.library.json`
+        : path.join(`${teacherPath}.normalization`, path.basename(key));
+      try {
+        return JSON.parse(await fs.readFile(localPath, 'utf8'));
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        if (!isR2Configured()) return null;
+        const hosted = await r2GetJsonFromR2(key);
+        if (hosted) {
+          await fs.mkdir(path.dirname(localPath), { recursive: true });
+          await fs.writeFile(localPath, JSON.stringify(hosted, null, 2), 'utf8');
+        }
+        return hosted;
+      }
+    }
+  }
   const teacherMatch = typeof key === 'string' && key.match(/^teachers\/([^/]+)\/data\.json$/);
   if (teacherMatch) {
     const localPath = getLocalTeacherDataPath(teacherMatch[1]);
@@ -222,8 +283,54 @@ export async function r2GetJson(key) {
 }
 
 export async function r2PutJson(key, data) {
+  if (/^teachers\/[^/]+\/data\.json$/.test(key)) {
+    const libraryKey = key.replace(/data\.json$/, 'library.json');
+    const hasFiles = data.parashaLibrary !== undefined || allRecordings(data).length > 0;
+    if (!hasFiles && !data.libraryKey) return putJson(key, data);
+    const previousIndex = await getJson(libraryKey);
+    const targetLufs = data.normalizationTargetLufs ?? previousIndex?.normalizationTargetLufs;
+    const folderTargets = data.normalizationFolderTargets ?? previousIndex?.normalizationFolderTargets;
+    const metadata = new Map();
+    const separated = mapRecordings(data, (item) => {
+      const { normalization, normalizationKey: previousKey, ...rest } = item;
+      if (!normalization) return previousKey ? { ...rest, normalizationKey: previousKey } : rest;
+      const metadataKey = key.replace(/data\.json$/, `normalization/${sha256Hex(recordingKey(item))}.json`);
+      metadata.set(metadataKey, { version: 1, normalization: withTarget(normalization, -18) });
+      return { ...rest, normalizationKey: metadataKey };
+    });
+    const entries = [...metadata];
+    for (let offset = 0; offset < entries.length; offset += 8) {
+      await Promise.all(entries.slice(offset, offset + 8).map(async ([metadataKey, document]) => {
+        const previous = await getJson(metadataKey);
+        if (JSON.stringify(previous) !== JSON.stringify(document)) await putJson(metadataKey, document);
+      }));
+    }
+    const { parashaLibrary, normalizationTargetLufs: _target,
+      normalizationFolderTargets: _folderTargets, ...teacherData } = separated;
+    const index = { version: 1, folders: parashaLibrary ?? previousIndex?.folders ?? {},
+      ...(folderTargets !== undefined ? { normalizationFolderTargets: folderTargets } : {}),
+      ...(Number.isFinite(targetLufs) ? { normalizationTargetLufs: targetLufs } : {}) };
+    if (JSON.stringify(index) !== JSON.stringify(previousIndex)) await putJson(libraryKey, index);
+    return putJson(key, { ...teacherData, libraryKey });
+  }
+  return putJson(key, data);
+}
+
+async function putJson(key, data) {
   const bodyStr = JSON.stringify(data, null, 2);
   const bodyBuf = Buffer.from(bodyStr, 'utf8');
+
+  const ancillaryMatch = key.match(/^teachers\/([^/]+)\/(library\.json|normalization\/[a-f0-9]{64}\.json)$/);
+  if (ancillaryMatch) {
+    const teacherPath = getLocalTeacherDataPath(ancillaryMatch[1]);
+    if (teacherPath) {
+      const localPath = ancillaryMatch[2] === 'library.json' ? `${teacherPath}.library.json`
+        : path.join(`${teacherPath}.normalization`, path.basename(key));
+      await fs.mkdir(path.dirname(localPath), { recursive: true });
+      await fs.writeFile(localPath, bodyBuf);
+      return { key, storage: 'local-file' };
+    }
+  }
 
   const teacherMatch = typeof key === 'string' && key.match(/^teachers\/([^/]+)\/data\.json$/);
   if (teacherMatch) {

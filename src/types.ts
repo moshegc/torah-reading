@@ -4,10 +4,17 @@ import type { ReadingPlan, HaftarahTradition } from './utils/readingPlan';
 export type RecordingSection = 'torah' | 'haftarah' | 'general';
 
 export interface RecordingNormalization {
-  version: 1;
+  version: 1 | 2;
   integratedLufs: number;
   truePeakDbtp: number;
   gainDb: number;
+  targetLufs?: number;
+  leveling?: {
+    duration: number;
+    points: { time: number; gainDb: number }[];
+    integratedLufs: number;
+    truePeakDbtp: number;
+  };
 }
 
 export interface RecordingItem {
@@ -25,6 +32,7 @@ export interface RecordingItem {
   r2Key?: string; // Cloudflare R2 object key (e.g. media/{teacherId}/{studentId}/...)
   r2Url?: string; // Direct R2 stream URL
   normalization?: RecordingNormalization;
+  normalizationKey?: string;
 }
 
 export interface ParashaMeta {
@@ -35,6 +43,7 @@ export interface ParashaMeta {
 }
 
 export type LibraryChange =
+  | { action: 'recalculate-normalization-target'; folder: string }
   | { action: 'set-item-normalization'; folder: string; itemId: string; r2Key?: string; normalization: RecordingNormalization }
   | { action: 'create-folder' | 'delete-folder'; folder: string }
   | { action: 'add-item'; folder: string; item: RecordingItem }

@@ -114,4 +114,49 @@ describe('local teacher data file support in _r2.js', () => {
     vi.stubEnv('LOCAL_TEACHER_DATA_FILE', testFile);
     expect(isLocalTeacherDataActive('teacher1')).toBe(true);
   });
+
+  it('migrates embedded library and scans into an index and per-audio files, then hydrates assignments', async () => {
+    vi.stubEnv('LOCAL_TEACHER_DATA_FILE', testFile);
+    vi.stubEnv('R2_ACCOUNT_ID', '');
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const item = { id: 'audio', viewUrl: '/audio.mp3', r2Key: 'media/teacher/library/audio.mp3', normalization };
+    const payload = {
+      students: [{ id: 'student', parasha: 'second', portions: [{ ...item, visible: false }] }],
+      parashaLibrary: { first: [item], second: [{ ...item, id: 'alias' }] },
+      normalizationTargetLufs: -24,
+      normalizationFolderTargets: { first: -24, second: -30 },
+    };
+    await fs.writeFile(testFile, JSON.stringify(payload), 'utf8');
+    expect((await r2GetJson('teachers/teacher/data.json')).parashaLibrary.first[0].normalization)
+      .toEqual({ ...normalization, targetLufs: -24, gainDb: 0 });
+    await r2PutJson('teachers/teacher/data.json', payload);
+    const teacher = JSON.parse(await fs.readFile(testFile, 'utf8'));
+    const index = JSON.parse(await fs.readFile(`${testFile}.library.json`, 'utf8'));
+    expect(teacher).not.toHaveProperty('parashaLibrary');
+    expect(teacher).not.toHaveProperty('normalizationTargetLufs');
+    expect(teacher).not.toHaveProperty('normalizationFolderTargets');
+    expect(index.normalizationFolderTargets).toEqual({ first: -24, second: -30 });
+    expect(teacher.students[0].portions[0]).not.toHaveProperty('normalization');
+    expect(teacher.libraryKey).toBe('teachers/teacher/library.json');
+    expect(index.folders.first[0]).not.toHaveProperty('normalization');
+    expect(index.folders.first[0].normalizationKey).toBe(index.folders.second[0].normalizationKey);
+    expect(await fs.readdir(`${testFile}.normalization`)).toHaveLength(1);
+    const hydrated = await r2GetJson('teachers/teacher/data.json');
+    expect(hydrated.students[0].portions[0]).toMatchObject({
+      visible: false, normalization: { targetLufs: -30, gainDb: -6 },
+    });
+    expect(hydrated.parashaLibrary.first[0].normalization.gainDb).toBe(0);
+    expect(hydrated.parashaLibrary.second[0].normalization.gainDb).toBe(-6);
+    // A routine teacher save must preserve the shared target and external index.
+    delete hydrated.normalizationTargetLufs;
+    delete hydrated.normalizationFolderTargets;
+    await r2PutJson('teachers/teacher/data.json', hydrated);
+    expect((await r2GetJson('teachers/teacher/data.json')).normalizationTargetLufs).toBe(-24);
+    expect((await r2GetJson('teachers/teacher/data.json')).normalizationFolderTargets)
+      .toEqual({ first: -24, second: -30 });
+    await r2PutJson('teachers/teacher/data.json', {
+      ...hydrated, students: [], parashaLibrary: {}, normalizationFolderTargets: {},
+    });
+    expect(await fs.readdir(`${testFile}.normalization`)).toHaveLength(1);
+  });
 });

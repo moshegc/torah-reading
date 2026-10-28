@@ -1,19 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CloudUpload, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
-import type { LibraryChange, RecordingItem, RecordingSection } from '../types';
+import type { LibraryChange, RecordingItem, RecordingSection, RecordingNormalization } from '../types';
 import { PARASHA_OPTIONS } from '../data/parashaOptions';
 import { uploadLocalFileToR2 } from '../utils/cloudSync';
 import { classifyFileTitle, getMediaStreamUrl } from '../utils/trackerCalculations';
 import { getRecordingSection, isDocument, withRecordingSection } from '../utils/recordings';
 import { analyzeRecordingUrl } from '../audio/analyzeRecording';
+import { activateFolderAudioLevels } from '../audio/activateFolderAudioLevels';
 import { RecordingSectionSelect } from './RecordingSectionSelect';
 import { RecordingFileIcon } from './RecordingFileIcon';
 import { ModalOverlay } from './ModalOverlay';
+import { RecordingGainDetails } from './RecordingGainDetails';
 
 interface TeacherLibraryManagerProps {
   teacherId: string;
   teacherToken: string;
   library: Record<string, RecordingItem[]>;
+  normalizationFolderTargets: Record<string, number>;
   pendingDeletionCount: number;
   operationError: string | null;
   onChange: (change: LibraryChange) => Promise<boolean>;
@@ -57,6 +60,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   teacherId,
   teacherToken,
   library,
+  normalizationFolderTargets,
   pendingDeletionCount,
   operationError,
   onChange,
@@ -74,6 +78,9 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   const [renameName, setRenameName] = useState('');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
+  const [scanErrors, setScanErrors] = useState<Record<string, string>>({});
+  const [scanningId, setScanningId] = useState<string | null>(null);
+  const [queuedScanIds, setQueuedScanIds] = useState<string[]>([]);
   const [normalizeAudio, setNormalizeAudio] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [failedChange, setFailedChange] = useState(false);
@@ -82,6 +89,8 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   const fileInput = useRef<HTMLInputElement>(null);
   const folderOptions = Object.keys(library);
   const items = library[folder] ?? [];
+  const hasFolderTarget = Object.prototype.hasOwnProperty.call(normalizationFolderTargets, folder);
+  const hasUnscannedAudio = items.some((item) => !isDocument(item) && item.normalization?.version !== 2);
   const replacement = items.find((item) => item.id === replacementId);
   const disabled = busy || pendingDeletionCount > 0;
 
@@ -120,18 +129,59 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
     }
   };
 
-  const analyzeItems = async (recordings: RecordingItem[]) => {
-    await runAction(async () => {
-      for (const [index, item] of recordings.entries()) {
-        setProgress(`מנתח ${index + 1}/${recordings.length}: ${item.aliyah}`);
-        const normalization = await analyzeRecordingUrl(getMediaStreamUrl(item));
-        if (!await mutate({
-          action: 'set-item-normalization', folder, itemId: item.id,
-          r2Key: item.r2Key, normalization,
-        }, `איזון העוצמה נשמר: ${item.aliyah}`)) return;
+  const scanItems = async (recordings: RecordingItem[]): Promise<boolean> => {
+      setQueuedScanIds(recordings.map((item) => item.id));
+      let completed = 0;
+      let failed = 0;
+      try {
+        for (const [index, item] of recordings.entries()) {
+          setScanningId(item.id);
+          setQueuedScanIds(recordings.slice(index + 1).map((queued) => queued.id));
+          setProgress(`מנתח ${index + 1}/${recordings.length}: ${item.aliyah} · יש להשאיר את החלונית פתוחה`);
+          setScanErrors((previous) => {
+            const next = { ...previous };
+            delete next[item.id];
+            return next;
+          });
+          let normalization: RecordingNormalization;
+          try {
+            normalization = await analyzeRecordingUrl(getMediaStreamUrl(item), item.title);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'ניתוח העוצמה נכשל';
+            setScanErrors((previous) => ({ ...previous, [item.id]: message }));
+            failed++;
+            console.error('[audio-gain] file scan failed', { recordingId: item.id, message });
+            continue;
+          }
+          try {
+            if (!await onChange({
+              action: 'set-item-normalization', folder, itemId: item.id,
+              r2Key: item.r2Key, normalization,
+            })) {
+              setScanErrors((previous) => ({ ...previous, [item.id]: 'הסריקה הושלמה אך שמירת התוצאה נכשלה. יש לנסות שוב.' }));
+              setError(`שמירת תוצאות הסריקה עבור ${item.aliyah} נכשלה. נשמרו ${completed}/${recordings.length} תוצאות.`);
+              setFailedChange(true);
+              return false;
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'שמירת תוצאות הסריקה נכשלה';
+            console.error('[audio-gain] scan save failed', { recordingId: item.id, message });
+            setScanErrors((previous) => ({ ...previous, [item.id]: message }));
+            setError(`שמירת תוצאות הסריקה עבור ${item.aliyah} נכשלה: ${message}. נשמרו ${completed}/${recordings.length} תוצאות.`);
+            return false;
+          }
+          completed++;
+          console.info('[audio-gain] scan results saved', { recordingId: item.id, title: item.title, normalization });
+        }
+        if (failed) {
+          setError(`נשמרו תוצאות ל-${completed}/${recordings.length} הקלטות. ${failed} סריקות נכשלו; פרטים בכרטיסי הקבצים.`);
+          return false;
+        }
+        return true;
+      } finally {
+        setScanningId(null);
+        setQueuedScanIds([]);
       }
-      setNotice(`ניתוח ${recordings.length} הקלטות הושלם. איזון העוצמה נשמר גם בשיוכי התלמידים.`);
-    });
   };
 
   const mutate = async (change: LibraryChange, message: string): Promise<boolean> => {
@@ -147,6 +197,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
     event.preventDefault();
     const name = newFolder.trim();
     if (!name || folderOptions.includes(name)) {
+      setNotice(null);
       setError(name ? 'תיקייה בשם זה כבר קיימת' : 'יש להזין שם תיקייה');
       setFailedChange(false);
       return;
@@ -201,12 +252,14 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!file || !title.trim() || !folderOptions.includes(folder)) {
+      setNotice(null);
       setError('יש לבחור תיקייה וקובץ ולהזין שם לחומר הלימוד');
       setFailedChange(false);
       return;
     }
     const ext = fileExtension(file);
     if (!ext || file.size === 0) {
+      setNotice(null);
       setError('יש לבחור קובץ לא ריק מסוג AAC, M4A, MP3, PDF, PNG, JPG, JPEG או WEBP');
       setFailedChange(false);
       return;
@@ -264,7 +317,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-5 space-y-4 overflow-y-auto">
+        <div className="p-5 space-y-4 overflow-y-auto min-h-0 flex-1">
           <p className="text-sm text-slate-600">
             נהל תיקיות, הקלטות, מסמכים ותמונות במאגר שלך. רק חומרים ששויכו לתלמיד בניהול ההקלטות יוצגו לו, לפי הסוג שנבחר.
           </p>
@@ -290,7 +343,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
             <div className="flex flex-wrap items-end gap-2">
               <div className="flex-1 min-w-0">
                 <label htmlFor="library-folder" className="block text-xs font-bold text-slate-700 mb-1">תיקייה במאגר</label>
-                <select id="library-folder" value={folder} onChange={(event) => { setFolder(event.target.value); resetUpload(); setMovingId(null); setRenameTarget(null); setNotice(null); }} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm">
+                <select id="library-folder" value={folder} onChange={(event) => { setFolder(event.target.value); resetUpload(); setMovingId(null); setRenameTarget(null); setNotice(null); setError(null); setFailedChange(false); }} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm">
                   {folderOptions.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
               </div>
@@ -298,12 +351,29 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
               <button type="button" onClick={deleteFolder} disabled={disabled || !folder} className="px-3 py-2 rounded-xl text-rose-700 bg-rose-50 text-sm font-bold">מחק תיקייה</button>
             </div>
           ) : <p className="text-sm text-slate-500">אין תיקיות במאגר. צור תיקייה כדי להוסיף חומרי לימוד.</p>}
-          {items.some((item) => !isDocument(item) && !item.normalization) && (
-            <button type="button" disabled={disabled} onClick={() => analyzeItems(items.filter((item) => !isDocument(item) && !item.normalization))} className="text-indigo-700 text-sm font-bold">
-              נתח עוצמה להקלטות שטרם נותחו בתיקייה
-            </button>
+          {folder && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" disabled={disabled || !items.some((item) => !isDocument(item))}
+                onClick={() => runAction(async () => {
+                  let scanFailed = false;
+                  await activateFolderAudioLevels(items, async (recordings) => {
+                    const success = await scanItems(recordings);
+                    scanFailed = !success;
+                    return success;
+                  }, async () => {
+                    setProgress('שומר איזון עוצמה לתיקייה…');
+                    return mutate({ action: 'recalculate-normalization-target', folder }, `איזון העוצמה הופעל לתיקייה ״${folder}״.`);
+                  });
+                  if (scanFailed) setError((previous) => `${previous ?? 'ניתוח ההקלטות נכשל.'} עדכון איזון העוצמה לתיקייה לא הושלם.`);
+                })} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-bold disabled:opacity-50">
+                {hasFolderTarget ? 'עדכן איזון עוצמה אוטומטי לתיקייה' : 'הפעל איזון עוצמה אוטומטי לתיקייה'}
+              </button>
+              <span className={`text-xs font-semibold ${hasFolderTarget ? 'text-emerald-700' : 'text-slate-600'}`}>
+                איזון לתיקייה: {hasFolderTarget ? 'הוגדר' : 'טרם הוגדר'}
+                {hasFolderTarget && hasUnscannedAudio && ' · יש הקלטות שטרם נותחו'}
+              </span>
+            </div>
           )}
-          <p className="text-xs text-slate-500">ניתוח העוצמה מתבצע במכשיר זה, ללא שינוי הקובץ המקורי. עד 16MB ו-5 דקות להקלטה; יש להשאיר את החלונית פתוחה. קבצים מיובאים מ-Drive ניתנים לניתוח כאן.</p>
 
           {renameTarget && (
             <form onSubmit={submitRename} className="flex flex-wrap items-end gap-2">
@@ -319,7 +389,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
           {items.length > 0 && (
             <ul className="divide-y divide-slate-200 border border-slate-200 rounded-xl">
               {items.map((item) => (
-                <li key={item.id} className="p-3 flex flex-wrap items-center justify-between gap-2">
+                <li key={item.id} aria-busy={scanningId === item.id} className={`p-3 flex flex-wrap items-center justify-between gap-2 ${scanningId === item.id ? 'bg-indigo-50' : ''}`}>
                   <a href={getMediaStreamUrl(item)} target="_blank" rel="noreferrer" className="min-w-0 flex items-center gap-2 text-sm text-slate-800">
                     <RecordingFileIcon item={item} /><span className="truncate">{item.aliyah}</span><span className="text-xs text-slate-400 uppercase">{item.ext}</span>
                   </a>
@@ -329,8 +399,10 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                     }
                   })} />
                   <div className="flex flex-wrap gap-2">
-                    {!isDocument(item) && (
-                      <button type="button" disabled={disabled} onClick={() => analyzeItems([item])} className="text-indigo-700 p-1 text-xs font-bold">
+                    {import.meta.env.VITE_AUDIO_GAIN_DEBUG === 'true' && !isDocument(item) && (
+                      <button type="button" disabled={disabled} onClick={() => runAction(async () => {
+                        if (await scanItems([item])) setNotice('תוצאת הסריקה נשמרה.');
+                      })} className="text-indigo-700 p-1 text-xs font-bold">
                         {item.normalization ? 'נתח עוצמה מחדש' : 'נתח עוצמה'}
                       </button>
                     )}
@@ -339,6 +411,14 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
                     <button type="button" aria-label={`החלף ${item.aliyah}`} disabled={disabled} onClick={() => { resetUpload(); setReplacementId(item.id); setTitle(item.aliyah); setSection(getRecordingSection(item)); setNotice(null); fileInput.current?.focus(); }} className="text-indigo-700 p-1 text-xs font-bold flex items-center gap-1"><RefreshCw className="w-4 h-4" /><span>החלף</span></button>
                     <button type="button" aria-label={`מחק ${item.aliyah}`} disabled={disabled} onClick={() => deleteItem(item)} className="text-rose-700 p-1 text-xs font-bold flex items-center gap-1"><Trash2 className="w-4 h-4" /><span>מחק</span></button>
                   </div>
+                  {!isDocument(item) && (
+                    <div className="w-full">
+                      {scanningId === item.id && <p role="status" className="flex items-center gap-2 text-sm font-bold text-indigo-700 mb-2"><Loader2 className="w-4 h-4 animate-spin" />מוריד, מנתח ושומר את ההקלטה…</p>}
+                      {queuedScanIds.includes(item.id) && <p className="text-xs text-slate-500">ממתין לסריקה…</p>}
+                      <RecordingGainDetails normalization={item.normalization} />
+                      {scanErrors[item.id] && <p role="alert" className="text-xs text-rose-800 bg-rose-50 rounded-lg p-2 mt-2 break-words">הסריקה האחרונה נכשלה: {scanErrors[item.id]}{operationError && ` (${operationError})`}</p>}
+                    </div>
+                  )}
                   {movingId === item.id && (
                     <div className="w-full flex flex-wrap gap-2 items-center">
                       <label htmlFor="library-move-folder" className="text-xs font-bold">העבר לתיקייה</label>
@@ -405,10 +485,14 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
               </button>
             </form>
           )}
-          {(error || failedChange) && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-800 text-sm">{error ?? operationError ?? 'השינוי לא הושלם. נסה שוב.'}</p>}
-          {progress && <p role="status" className="text-sm text-indigo-700">{progress}</p>}
-          {notice && <p role="status" className="p-3 rounded-xl bg-emerald-50 text-emerald-800 text-sm">{notice}</p>}
         </div>
+        {(error || failedChange || progress || notice) && (
+          <div aria-label="סטטוס פעולות במאגר" className="shrink-0 max-h-[30vh] overflow-y-auto border-t border-slate-200 bg-white px-5 py-3 space-y-2">
+            {(error || failedChange) && <p role="alert" className="p-3 rounded-xl bg-rose-50 text-rose-800 text-sm break-words">{error ?? operationError ?? 'השינוי לא הושלם. נסה שוב.'}{error && failedChange && operationError && ` (${operationError})`}</p>}
+            {progress && <p role="status" className="flex items-center gap-2 text-sm text-indigo-700"><Loader2 className="w-4 h-4 animate-spin shrink-0" />{progress}</p>}
+            {notice && <p role="status" className="p-3 rounded-xl bg-emerald-50 text-emerald-800 text-sm">{notice}</p>}
+          </div>
+        )}
       </div>
     </ModalOverlay>
   );

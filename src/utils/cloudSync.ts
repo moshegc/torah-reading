@@ -37,6 +37,7 @@ export interface CloudAppData {
   students: StudentProfile[];
   haftarotMap: Record<string, number>;
   parashaLibrary?: Record<string, RecordingItem[]>;
+  normalizationFolderTargets?: Record<string, number>;
   settings?: TeacherSettings;
   pendingMediaDeletes?: string[];
   updatedAt: string;
@@ -290,7 +291,7 @@ export async function uploadLocalFileToR2(params: {
       ? params.base64Data : `data:${params.mimeType};base64,${params.base64Data}`;
     const response = await fetch(dataUrl);
     if (!response.ok) throw new Error('קריאת הקובץ לניתוח נכשלה');
-    normalization = await analyzeUpload(await response.blob());
+    normalization = await analyzeUpload(await response.blob(), params.fileName);
   }
   onStatus?.('מעלה קובץ...');
   const res = await fetch('/api/r2-media', {

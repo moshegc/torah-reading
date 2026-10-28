@@ -84,6 +84,10 @@ export default async function handler(req, res) {
       const existingData = await r2GetJson(dataKey);
 
       const payload = syncStudentFileCategories({
+        ...(existingData?.normalizationFolderTargets !== undefined
+          ? { normalizationFolderTargets: existingData.normalizationFolderTargets } : {}),
+        ...(Number.isFinite(existingData?.normalizationTargetLufs)
+          ? { normalizationTargetLufs: existingData.normalizationTargetLufs } : {}),
         students: Array.isArray(body.students) ? body.students : [],
         haftarotMap: body.haftarotMap && typeof body.haftarotMap === 'object' ? body.haftarotMap : {},
         parashaLibrary: body.parashaLibrary || existingData?.parashaLibrary || {},

@@ -17,6 +17,8 @@
  *    by an exact integer period so all vocal harmonics stay in phase.
  */
 
+import { gainDbToLinear, levelingGainAt } from '../audio/normalization';
+
 const WORKLET_PROCESSOR_NAME = 'psola-voice-pitch-processor';
 
 const WORKLET_CODE = `
@@ -304,6 +306,8 @@ export interface VoicePitchGraph {
   sourceNode: MediaElementAudioSourceNode;
   setPitchSemitones: (semitones: number) => Promise<void>;
   setGain: (gain: number) => void;
+  setGainEnvelope: (baseDb: number, points: { time: number; gainDb: number }[],
+    position: number, rate: number, playing: boolean) => void;
   dispose: () => void;
 }
 
@@ -392,7 +396,24 @@ export async function createVoicePitchGraph(
     setPitchSemitones,
     setGain: (gain) => {
       if (!Number.isFinite(gain) || gain < 0) throw new Error('Invalid playback gain');
+      gainNode.gain.cancelScheduledValues(ctx.currentTime);
       gainNode.gain.setValueAtTime(gain, ctx.currentTime);
+    },
+    setGainEnvelope: (baseDb, points, position, rate, playing) => {
+      if (!Number.isFinite(position) || !Number.isFinite(rate) || rate <= 0 || !points.length) {
+        throw new Error('Invalid playback gain timeline');
+      }
+      const now = ctx.currentTime;
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(gainDbToLinear(baseDb + levelingGainAt(points, position)), now);
+      if (!playing) return;
+      for (const point of points) {
+        if (point.time > position) {
+          gainNode.gain.exponentialRampToValueAtTime(
+            gainDbToLinear(baseDb + point.gainDb), now + (point.time - position) / rate,
+          );
+        }
+      }
     },
     dispose: () => {
       disposed = true;

@@ -7,7 +7,9 @@ afterEach(() => {
 
 function audioEnvironment() {
   const source = { connect: vi.fn(), disconnect: vi.fn() };
-  const gain = { connect: vi.fn(), disconnect: vi.fn(), gain: { setValueAtTime: vi.fn() } };
+  const gain = { connect: vi.fn(), disconnect: vi.fn(), gain: {
+    setValueAtTime: vi.fn(), cancelScheduledValues: vi.fn(), exponentialRampToValueAtTime: vi.fn(),
+  } };
   const context = {
     state: 'running', currentTime: 1, destination: {}, resume: vi.fn(),
     createMediaElementSource: vi.fn(() => source), createGain: vi.fn(() => gain),
@@ -35,6 +37,9 @@ describe('normalization and pitch audio graph', () => {
     expect(context.audioWorklet.addModule).not.toHaveBeenCalled();
     graph.setGain(2);
     expect(gain.gain.setValueAtTime).toHaveBeenCalledWith(2, 1);
+    graph.setGainEnvelope(0, [{ time: 0, gainDb: 0 }, { time: 4, gainDb: 6 }], 2, 2, true);
+    expect(gain.gain.setValueAtTime).toHaveBeenLastCalledWith(Math.pow(10, 3 / 20), 1);
+    expect(gain.gain.exponentialRampToValueAtTime).toHaveBeenLastCalledWith(Math.pow(10, 6 / 20), 2);
     await graph.setPitchSemitones(3);
     expect(Worklet).toHaveBeenCalledTimes(1);
     expect(source.connect).toHaveBeenLastCalledWith(worklet);
