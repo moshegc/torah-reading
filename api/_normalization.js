@@ -1,5 +1,12 @@
+import { createHash } from 'node:crypto';
+
 export function recordingKey(item) {
   return item.r2Key ? `r2:${item.r2Key}` : `id:${item.id}:${item.viewUrl}`;
+}
+
+export function normalizationMetadataKey(teacherId, item) {
+  const hash = createHash('sha256').update(recordingKey(item)).digest('hex');
+  return `teachers/${teacherId}/normalization/${hash}.json`;
 }
 
 export function allRecordings(data) {

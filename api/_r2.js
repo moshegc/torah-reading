@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { allRecordings, applyNormalizationTargets, mapRecordings, recordingKey, withTarget } from './_normalization.js';
+import { allRecordings, applyNormalizationTargets, mapRecordings, normalizationMetadataKey, withTarget } from './_normalization.js';
 
 const LOCAL_R2_DIR = path.resolve(process.cwd(), '.r2-local');
 
@@ -294,7 +294,8 @@ export async function r2PutJson(key, data) {
     const separated = mapRecordings(data, (item) => {
       const { normalization, normalizationKey: previousKey, ...rest } = item;
       if (!normalization) return previousKey ? { ...rest, normalizationKey: previousKey } : rest;
-      const metadataKey = key.replace(/data\.json$/, `normalization/${sha256Hex(recordingKey(item))}.json`);
+      const teacherId = key.split('/')[1];
+      const metadataKey = normalizationMetadataKey(teacherId, item);
       metadata.set(metadataKey, { version: 1, normalization: withTarget(normalization, -18) });
       return { ...rest, normalizationKey: metadataKey };
     });
@@ -373,6 +374,17 @@ async function putJson(key, data) {
 }
 
 export async function r2DeleteObject(key) {
+  const normalizationMatch = key.match(/^teachers\/([^/]+)\/normalization\/[a-f0-9]{64}\.json$/);
+  const teacherPath = normalizationMatch && getLocalTeacherDataPath(normalizationMatch[1]);
+  if (teacherPath) {
+    const localPath = path.join(`${teacherPath}.normalization`, path.basename(key));
+    try {
+      await fs.unlink(localPath);
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+    }
+    return;
+  }
   if (!isR2Configured()) {
     const fp = await localFilePath(key);
     for (const file of [fp, `${fp}.meta.json`]) {

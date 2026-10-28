@@ -3,6 +3,7 @@ import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody, isLocalTeacherDataA
 import { verifyTeacherToken } from './r2-auth.js';
 import handler, { applyLibraryChange } from './library.js';
 import dataHandler from './r2-data.js';
+import { normalizationMetadataKey } from './_normalization.js';
 
 vi.mock('./_r2.js', () => ({
   r2GetJson: vi.fn(),
@@ -366,6 +367,36 @@ describe('library changes', () => {
     expect(next.parashaLibrary.shared).toEqual(data.parashaLibrary.shared);
   });
 
+  it('queues unreferenced leveling data for deleted and replaced recordings, including Drive files', () => {
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const normalized = { ...recording, normalization, normalizationKey: normalizationMetadataKey('teacher', recording) };
+    const key = normalizationMetadataKey('teacher', normalized);
+    const data = { ...fixture(), students: [], parashaLibrary: { Folder: [normalized] } };
+    const deleted = applyLibraryChange(data, { action: 'delete-item', folder: 'Folder', itemId: normalized.id }, 'teacher');
+    expect(deleted.pendingMediaDeletes).toEqual([recording.r2Key, key]);
+    const replaced = applyLibraryChange(data, { action: 'replace-item', folder: 'Folder', itemId: normalized.id, item: replacement }, 'teacher');
+    expect(replaced.pendingMediaDeletes).toEqual([recording.r2Key, key]);
+
+    const drive = { ...recording, normalization, r2Key: undefined, id: 'drive' };
+    const driveData = { ...data, parashaLibrary: { Folder: [drive] } };
+    const deletedDrive = applyLibraryChange(driveData, { action: 'delete-folder', folder: 'Folder' }, 'teacher');
+    expect(deletedDrive.pendingMediaDeletes).toEqual([normalizationMetadataKey('teacher', drive)]);
+  });
+
+  it('keeps leveling data used by another folder or a remaining student reference', () => {
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const normalized = { ...recording, normalization, normalizationKey: normalizationMetadataKey('teacher', recording) };
+    const alias = { ...normalized, id: 'alias' };
+    const data = { ...fixture(), students: [], parashaLibrary: { Folder: [normalized], Other: [alias] } };
+    const deleted = applyLibraryChange(data, { action: 'delete-folder', folder: 'Folder' }, 'teacher');
+    expect(deleted.pendingMediaDeletes).toEqual([]);
+    const replaced = applyLibraryChange({
+      ...data, parashaLibrary: { Folder: [normalized] },
+      students: [{ id: 's', portions: [{ ...normalized, id: 'student-alias', r2Key: 'media/teacher/library/other.mp3' }] }],
+    }, { action: 'replace-item', folder: 'Folder', itemId: normalized.id, item: replacement }, 'teacher');
+    expect(replaced.pendingMediaDeletes).not.toContain(normalizationMetadataKey('teacher', normalized));
+  });
+
   it('updates copies across folders and students, preserving IDs and per-copy visibility', () => {
     const data = fixture();
     data.parashaLibrary.shared = [{ ...recording, id: 'shared-id', visible: false }];
@@ -477,6 +508,43 @@ describe('persistent deletion workflow', () => {
     log.mockRestore();
   });
 
+  it('retries failed leveling-data deletion without losing the durable queue', async () => {
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const normalized = { ...recording, normalization };
+    const key = normalizationMetadataKey('teacher', normalized);
+    stored.parashaLibrary['בראשית'] = [normalized];
+    stored.students.forEach((student) => {
+      student.portions = student.portions.map((item) => item.id === recording.id ? { ...item, normalization } : item);
+    });
+    r2DeleteObject.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Metadata delete failed'));
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const failed = await request({ action: 'delete-item', folder: 'בראשית', itemId: recording.id });
+    expect(failed.status).toBe(500);
+    expect(stored.pendingMediaDeletes).toEqual([recording.r2Key, key]);
+    expect((await request({ action: 'create-folder', folder: 'New' })).status).toBe(409);
+    expect((await request({ action: 'retry-deletions' })).status).toBe(200);
+    expect(r2DeleteObject.mock.calls.map(([deletedKey]) => deletedKey)).toEqual([recording.r2Key, key, recording.r2Key, key]);
+    expect(stored.pendingMediaDeletes).toEqual([]);
+    log.mockRestore();
+  });
+
+  it('does not delete queued leveling data that has since been referenced again', async () => {
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const key = normalizationMetadataKey('teacher', recording);
+    stored.parashaLibrary['בראשית'][0].normalization = normalization;
+    stored.pendingMediaDeletes = [key];
+    expect((await request({ action: 'retry-deletions' })).status).toBe(200);
+    expect(r2DeleteObject).not.toHaveBeenCalled();
+    expect(stored.pendingMediaDeletes).toEqual([]);
+  });
+
+  it('rejects leveling metadata keys owned by another teacher', async () => {
+    stored.parashaLibrary['בראשית'][0].normalizationKey = `teachers/other/normalization/${'a'.repeat(64)}.json`;
+    expect((await request({ action: 'delete-folder', folder: 'בראשית' })).status).toBe(403);
+    expect(r2PutJson).not.toHaveBeenCalled();
+    expect(r2DeleteObject).not.toHaveBeenCalled();
+  });
+
   it('keeps the queue if saving cleanup completion fails, so deletion can be retried safely', async () => {
     r2PutJson.mockImplementationOnce(async (_key, data) => { stored = structuredClone(data); })
       .mockRejectedValueOnce(new Error('Completion save failed'));
@@ -511,6 +579,17 @@ describe('persistent deletion workflow', () => {
     expect(r2DeleteObject).not.toHaveBeenCalled();
     expect(stored.pendingMediaDeletes).toEqual([]);
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('deletes local leveling data even when hosted media deletion is skipped', async () => {
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    stored.parashaLibrary['בראשית'][0].normalization = normalization;
+    isLocalTeacherDataActive.mockReturnValue(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect((await request({ action: 'delete-folder', folder: 'בראשית' })).status).toBe(200);
+    expect(r2DeleteObject).toHaveBeenCalledOnce();
+    expect(r2DeleteObject).toHaveBeenCalledWith(normalizationMetadataKey('teacher', recording));
     warn.mockRestore();
   });
 });

@@ -1,7 +1,7 @@
 import { r2GetJson, r2PutJson, r2DeleteObject, readJsonBody, isLocalTeacherDataActive } from './_r2.js';
 import { sanitizeTeacherId, verifyTeacherToken } from './r2-auth.js';
 import { sameRecording as sameItem, copyFileCategory, syncStudentFileCategories } from './_recordings.js';
-import { applyNormalizationTargets, percentileTarget, withTarget } from './_normalization.js';
+import { applyNormalizationTargets, normalizationMetadataKey, percentileTarget, withTarget } from './_normalization.js';
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const extensions = ['aac', 'm4a', 'mp3', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
@@ -19,6 +19,23 @@ function assertOwnedKey(key, teacherId) {
       /[\\\0]/.test(key) || key.split('/').some((part) => part === '..' || part === '.')) {
     throw new LibraryError('לא ניתן לשנות קובץ שאינו שייך למאגר שלך', 403);
   }
+}
+
+function isOwnedNormalizationKey(key, teacherId) {
+  const prefix = `teachers/${teacherId}/normalization/`;
+  return typeof key === 'string' && key.startsWith(prefix) &&
+    /^[a-f0-9]{64}\.json$/.test(key.slice(prefix.length));
+}
+
+function assertOwnedCleanupKey(key, teacherId) {
+  if (!isOwnedNormalizationKey(key, teacherId)) assertOwnedKey(key, teacherId);
+}
+
+function normalizationKeys(items, teacherId) {
+  return items.flatMap((item) => {
+    if (!item.normalization && !item.normalizationKey) return [];
+    return [...new Set([item.normalizationKey, normalizationMetadataKey(teacherId, item)].filter(Boolean))];
+  });
 }
 
 function folderName(value) {
@@ -239,8 +256,12 @@ export function applyLibraryChange(data, change, teacherId) {
     updatedAt: new Date().toISOString(),
   });
   const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
-  next.pendingMediaDeletes = [...new Set(removed.map((item) => item.r2Key).filter((key) => key && !retainedKeys.has(key)))];
-  for (const key of next.pendingMediaDeletes) assertOwnedKey(key, teacherId);
+  const retainedNormalization = new Set(normalizationKeys(recordings(next), teacherId));
+  next.pendingMediaDeletes = [...new Set([
+    ...removed.map((item) => item.r2Key).filter((key) => key && !retainedKeys.has(key)),
+    ...normalizationKeys(removed, teacherId).filter((key) => !retainedNormalization.has(key)),
+  ])];
+  for (const key of next.pendingMediaDeletes) assertOwnedCleanupKey(key, teacherId);
   return next;
 }
 
@@ -276,10 +297,12 @@ export default async function handler(req, res) {
     if (next.pendingMediaDeletes?.length) {
       try {
         const retainedKeys = new Set(recordings(next).map((item) => item.r2Key).filter(Boolean));
+        const retainedNormalization = new Set(normalizationKeys(recordings(next), teacherId));
         for (const key of next.pendingMediaDeletes) {
-          assertOwnedKey(key, teacherId);
-          if (!retainedKeys.has(key)) {
-            if (isLocalTeacherDataActive(teacherId)) {
+          assertOwnedCleanupKey(key, teacherId);
+          const isNormalization = isOwnedNormalizationKey(key, teacherId);
+          if (!retainedKeys.has(key) && !retainedNormalization.has(key)) {
+            if (!isNormalization && isLocalTeacherDataActive(teacherId)) {
               console.warn(`[LOCAL TEACHER CONFIG] Skipping R2 object deletion for hosted asset: ${key}`);
             } else {
               await r2DeleteObject(key);

@@ -8,6 +8,8 @@ import {
   r2PutJson,
   r2DeleteObject,
 } from './_r2.js';
+import libraryHandler from './library.js';
+import { createTeacherToken } from './r2-auth.js';
 
 describe('local teacher data file support in _r2.js', () => {
   const testDir = path.resolve(process.cwd(), '.test-local-config');
@@ -154,9 +156,36 @@ describe('local teacher data file support in _r2.js', () => {
     expect((await r2GetJson('teachers/teacher/data.json')).normalizationTargetLufs).toBe(-24);
     expect((await r2GetJson('teachers/teacher/data.json')).normalizationFolderTargets)
       .toEqual({ first: -24, second: -30 });
+  });
+
+  it('removes local leveling metadata only after the last folder reference is deleted', async () => {
+    vi.stubEnv('LOCAL_TEACHER_DATA_FILE', testFile);
+    for (const key of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET_NAME']) vi.stubEnv(key, '');
+    const normalization = { version: 1, integratedLufs: -24, truePeakDbtp: -10, gainDb: 6 };
+    const item = {
+      id: 'drive', title: 'Audio', aliyah: 'Audio', category: 'shabbat', ext: 'mp3',
+      viewUrl: 'https://example.com/audio', normalization,
+    };
     await r2PutJson('teachers/teacher/data.json', {
-      ...hydrated, students: [], parashaLibrary: {}, normalizationFolderTargets: {},
+      students: [{ id: 'student', portions: [item] }],
+      parashaLibrary: { first: [item], second: [item] },
     });
     expect(await fs.readdir(`${testFile}.normalization`)).toHaveLength(1);
+    const request = async (body) => {
+      const res = { setHeader: vi.fn(), status: vi.fn().mockReturnThis(), json: vi.fn().mockReturnThis() };
+      await libraryHandler({
+        method: 'POST', headers: { authorization: `Bearer ${createTeacherToken('teacher')}` }, body,
+      }, res);
+      expect(res.status).toHaveBeenCalledWith(200);
+      return res.json.mock.calls[0][0];
+    };
+    await request({ action: 'delete-folder', folder: 'first' });
+    expect(await fs.readdir(`${testFile}.normalization`)).toHaveLength(1);
+    expect((await r2GetJson('teachers/teacher/data.json')).students[0].portions).toHaveLength(1);
+    await request({ action: 'delete-folder', folder: 'second' });
+    expect(await fs.readdir(`${testFile}.normalization`)).toHaveLength(0);
+    const result = await r2GetJson('teachers/teacher/data.json');
+    expect(result.students[0].portions).toEqual([]);
+    expect(result.pendingMediaDeletes).toEqual([]);
   });
 });
