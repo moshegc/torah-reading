@@ -54,6 +54,7 @@ import {
 import {
   calculateStudentStats,
   formatDateIL,
+  formatDateISO,
   parseFlexibleDate,
   lookupParashaVerses,
   parseDriveUrl,
@@ -73,7 +74,7 @@ import {
 import type { DriveSyncStatus } from '../App';
 import { AudioPlayerBar } from './AudioPlayerBar';
 import { AboutLink } from './AboutPage';
-import { barMitzvaFromGregorian, barMitzvaFromHebrew, type BarMitzvaInfo } from '../utils/barMitzvaParsha';
+import { barMitzvaFromGregorian, barMitzvaFromHebrew, nextParashaReadingDate, type BarMitzvaInfo } from '../utils/barMitzvaParsha';
 
 interface TeacherViewProps {
   teacherId: string;
@@ -177,7 +178,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [newName, setNewName] = useState('');
   const [newParasha, setNewParasha] = useState('בראשית');
   const [newHaftarah, setNewHaftarah] = useState('בראשית');
-  const [newBarMitzvahDate, setNewBarMitzvahDate] = useState('2027-01-01');
+  const [newBarMitzvahDate, setNewBarMitzvahDate] = useState('');
+  const [parashaDateNotFound, setParashaDateNotFound] = useState(false);
   const [newParashaVerses, setNewParashaVerses] = useState(0);
   const [newSkippedVerses, setNewSkippedVerses] = useState(0);
   const [newReadingPlan, setNewReadingPlan] = useState<ReadingPlan>(EMPTY_READING_PLAN);
@@ -196,6 +198,12 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [dobHebYear, setDobHebYear] = useState(5780);
   const [bmCalcResult, setBmCalcResult] = useState<BarMitzvaInfo | null>(null);
   const [bmCalcError, setBmCalcError] = useState<string | null>(null);
+
+  const suggestBarMitzvahDate = (parasha: string) => {
+    const date = nextParashaReadingDate(parasha);
+    setNewBarMitzvahDate(date ? formatDateISO(date) : '');
+    setParashaDateNotFound(!date);
+  };
 
   const calculateBarMitzva = () => {
     setBmCalcError(null);
@@ -223,10 +231,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
           setNewParashaVerses(computed.torah);
         }
       }
-      const s = info.shabbatDate;
-      setNewBarMitzvahDate(
-        `${s.getFullYear()}-${String(s.getMonth() + 1).padStart(2, '0')}-${String(s.getDate()).padStart(2, '0')}`
-      );
+      setNewBarMitzvahDate(formatDateISO(info.shabbatDate));
+      setParashaDateNotFound(false);
     } catch {
       setBmCalcResult(null);
       setBmCalcError('תאריך לא תקין');
@@ -592,6 +598,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
 
     onAddStudent(created);
     setNewName('');
+    setNewBarMitzvahDate('');
+    setBmCalcResult(null);
+    setBmCalcError(null);
     setNewStudyStartDate('');
     setNewReadingPlan(EMPTY_READING_PLAN);
     setNewHaftarahTradition(undefined);
@@ -608,16 +617,14 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       .map((student) => {
         const stats = calculateStudentStats(student);
         const bmDate = parseFlexibleDate(student.barMitzvahDate) || today;
-        const parts = stats.studyStartDate.split('/');
-        const startDate =
-          parts.length === 3
-            ? new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]))
-            : addDays(bmDate, -stats.totalStudyWeeks * 7);
+        const startDate = parseFlexibleDate(stats.studyStartDate) ?? addDays(bmDate, -stats.totalStudyWeeks * 7);
+        const startWeek = startOfWeekSunday(startDate);
 
         return {
           student,
           stats,
-          startWeek: startOfWeekSunday(startDate),
+          startWeek,
+          firstSpareWeek: addDays(startWeek, stats.requiredStudyWeeks * 7),
           endWeek: startOfWeekSunday(bmDate),
         };
       })
@@ -679,6 +686,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  if (!newBarMitzvahDate) suggestBarMitzvahDate(newParasha);
                   setAddStudentStep(1);
                   setShowAddStudentModal(true);
                 }}
@@ -1421,7 +1429,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </thead>
 
                 <tbody className="divide-y divide-slate-200">
-                  {ganttData.rows.map(({ student, stats, startWeek, endWeek }) => {
+                  {ganttData.rows.map(({ student, stats, startWeek, firstSpareWeek, endWeek }) => {
                     return (
                       <tr key={student.id} className="hover:bg-slate-50/80">
                         <td className="sticky right-0 z-10 bg-white px-3 py-2.5 border-l border-slate-200 shadow-[2px_0_5px_rgba(0,0,0,0.03)]">
@@ -1455,22 +1463,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                           const isBmWeek = t === endWeek.getTime();
                           const isPast = t < todayTime;
 
-                          const weeksBeforeBm = Math.round(
-                            (endWeek.getTime() - t) / (7 * 24 * 3600 * 1000)
-                          );
-                          const isBufferWeek =
-                            !isPast &&
-                            !isBmWeek &&
-                            stats.spareWeeks > 0 &&
-                            weeksBeforeBm <= stats.spareWeeks;
-
                           let barClass = '';
                           if (inWindow) {
                             if (isBmWeek) {
                               barClass = 'bg-amber-400 text-slate-950 font-extrabold';
                             } else if (isPast) {
                               barClass = 'bg-slate-400/80 text-white';
-                            } else if (isBufferWeek) {
+                            } else if (t >= firstSpareWeek.getTime()) {
                               barClass = 'bg-emerald-500 text-white';
                             } else {
                               barClass = 'bg-indigo-600 text-white';
@@ -2244,15 +2243,18 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label htmlFor="new-student-parasha" className="block text-xs font-bold text-slate-700 mb-1">
                     פרשת בר המצווה
                   </label>
                   <select
+                    id="new-student-parasha"
                     value={newParasha}
                     onChange={(e) => {
                       const p = e.target.value;
                       setNewParasha(p);
                       setNewHaftarah(p);
+                      setBmCalcResult(null);
+                      suggestBarMitzvahDate(p);
                       if (!newReadingPlan.weekday && newReadingPlan.aliyot.length === 0 && !newReadingPlan.maftir && !newReadingPlan.haftarah) {
                         setNewParashaVerses(0);
                       } else {
@@ -2271,15 +2273,26 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                  <label htmlFor="new-student-bm-date" className="block text-xs font-bold text-slate-700 mb-1">
                     תאריך בר מצווה
                   </label>
-                  <DateInput
+                  <input
+                    id="new-student-bm-date"
+                    type="date"
+                    dir="ltr"
                     required
                     value={newBarMitzvahDate}
-                    onChange={setNewBarMitzvahDate}
-                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      setNewBarMitzvahDate(e.target.value);
+                      setParashaDateNotFound(false);
+                    }}
+                    className="w-full min-w-0 border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />
+                  {parashaDateNotFound && (
+                    <p role="status" className="mt-1 text-[11px] text-slate-600">
+                      לא נמצא תאריך קריאה קרוב לפרשה זו. יש לבחור תאריך ידנית.
+                    </p>
+                  )}
                 </div>
               </div>
               </fieldset>

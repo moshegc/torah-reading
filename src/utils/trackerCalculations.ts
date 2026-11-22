@@ -64,6 +64,13 @@ export function formatDateIL(input: string | Date): string {
   return `${d}/${m}/${y}`;
 }
 
+export function formatDateISO(date: Date): string {
+  const year = String(date.getFullYear()).padStart(4, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function lookupParashaVerses(parashaName: string): number {
   const clean = parashaName.trim();
   const found = PARASHA_META_LIST.find(
@@ -113,7 +120,8 @@ export function calculateStudentStats(
   const O = L === 0 ? 0 : roundUp(L / 5); // שיעורים ללימוד
   const P = N - O; // שבועות עודפים
 
-  const R = roundUp(J / 5) + 8; // שבועות לימוד כולל
+  const requiredStudyWeeks = roundUp(J / 5);
+  const R = requiredStudyWeeks + 8; // שבועות לימוד כולל
   const S = roundUp(J / 5 / 4) + 2; // חודשי לימוד
   const Q = edate(student.barMitzvahDate, -S); // התחלה משוערת
 
@@ -129,6 +137,7 @@ export function calculateStudentStats(
     spareWeeks: P,
     estimatedStartDate: Q,
     studyStartDate: student.studyStartDate ? formatDateIL(student.studyStartDate) : Q,
+    requiredStudyWeeks,
     totalStudyWeeks: R,
     totalStudyMonths: S,
     progressPercent,

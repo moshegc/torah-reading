@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { formatDateIL, parseFlexibleDate } from '../utils/trackerCalculations';
+import { formatDateIL, formatDateISO, parseFlexibleDate } from '../utils/trackerCalculations';
 
 interface DateInputProps {
   value: string;
@@ -43,9 +43,7 @@ export const DateInput: React.FC<DateInputProps> = ({
         event.target.setCustomValidity(
           next && !date ? 'יש להזין תאריך תקין בפורמט DD/MM/YYYY' : ''
         );
-        const iso = date
-          ? `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-          : '';
+        const iso = date ? formatDateISO(date) : '';
         lastValue.current = iso;
         onChange(iso);
       }}

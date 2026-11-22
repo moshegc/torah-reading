@@ -85,6 +85,7 @@ export interface StudentComputedStats {
   spareWeeks: number; // שבועות עודפים = N - O
   estimatedStartDate: string; // התחלה משוערת = EDATE(D, -S)
   studyStartDate: string;
+  requiredStudyWeeks: number; // שבועות לימוד נדרשים מתחילת הלימוד = ROUNDUP(J / 5, 0)
   totalStudyWeeks: number; // שבועות לימוד כולל = ROUNDUP(J / 5, 0) + 8
   totalStudyMonths: number; // חודשי לימוד = ROUNDUP((J / 5) / 4, 0) + 2
   progressPercent: number;

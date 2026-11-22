@@ -39,6 +39,15 @@ describe('European dates', () => {
       expect(stats.studyStartDate).toBe('07/11/2026');
       expect(stats.estimatedStartDate).not.toBe(calculateStudentStats(student).estimatedStartDate);
     });
+
+    it('bases the required timeline on all assigned verses, not on today or learned verses', () => {
+      const progress = { ...student, parashaVerses: 101, learnedParashaVerses: 100, haftarahVerses: 20 };
+      const stats = calculateStudentStats(progress, new Date(2027, 5, 1));
+      expect(stats.lessonsNeeded).toBe(5);
+      expect(stats.requiredStudyWeeks).toBe(25);
+      expect(stats.totalStudyWeeks).toBe(33);
+      expect(calculateStudentStats(progress, new Date(2026, 10, 7)).requiredStudyWeeks).toBe(25);
+    });
   });
 
   it.each(['31/02/2026', '29/02/2026', '01/13/2026', '00/01/2026', '12/31/2026'])(

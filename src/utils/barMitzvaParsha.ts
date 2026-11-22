@@ -1,5 +1,6 @@
-import { HDate, Sedra, months, parshiot } from '@hebcal/core';
+import { HDate, getSedra, months, parshiot } from '@hebcal/core';
 import { PARASHA_META_LIST } from '../data/torahReference';
+import { findParashaOption } from '../data/parashaOptions';
 
 export interface BarMitzvaInfo {
   /** Hebrew date of birth used for the calculation */
@@ -52,7 +53,7 @@ export function getBarMitzvaHDate(birth: HDate): HDate {
 function findParshaShabbat(date: HDate): { hd: HDate; parsha: string[]; parshaHe: string[] } {
   let sat = new HDate(date.onOrAfter(6));
   for (let i = 0; i < 4; i++) {
-    const sedra = new Sedra(sat.getFullYear(), true) // Israel calendar;
+    const sedra = getSedra(sat.getFullYear(), true);
     const res = sedra.lookup(sat);
     if (!res.chag) {
       return { hd: sat, parsha: res.parsha, parshaHe: res.parsha.map((p) => hebrewParshaName(p)) };
@@ -60,6 +61,24 @@ function findParshaShabbat(date: HDate): { hd: HDate; parsha: string[]; parshaHe
     sat = new HDate(sat.abs() + 7);
   }
   throw new Error('No parsha found');
+}
+
+/** Find the next date the selected reading occurs in the Israel calendar, including today. */
+export function nextParashaReadingDate(name: string, from: Date = new Date()): Date | null {
+  const option = findParashaOption(name);
+  if (!option) return null;
+
+  const today = new HDate(from);
+  const startYear = today.getFullYear();
+  const names = option.order.map((order) => parshiot[order - 1]);
+  // Singles and doubles are distinct reading plans. Some doubles recur only after several years.
+  for (let year = startYear; year <= startYear + 19; year++) {
+    const reading = option.readingId === 'Vezot Haberakhah'
+      ? new HDate(22, months.TISHREI, year) // Simchat Torah in Israel, not a regular Shabbat reading.
+      : getSedra(year, true).find(names);
+    if (reading && reading.abs() >= today.abs()) return reading.greg();
+  }
+  return null;
 }
 
 function hebrewParshaName(name: string): string {
@@ -98,5 +117,4 @@ export function barMitzvaFromGregorian(dob: Date, afterSunset = false): BarMitzv
 export function barMitzvaFromHebrew(input: HebrewDateInput): BarMitzvaInfo {
   return build(new HDate(input.day, input.month as number, input.year));
 }
-
 
