@@ -49,12 +49,13 @@ describe('student auto-play', () => {
   const maftir = recording('maftir', 'מפטיר');
   const haftarah = recording('haftarah', 'הפטרה', 'haftarah');
 
-  function setup(current: RecordingItem, portions: RecordingItem[], enabled = true, haftarahName = 'בראשית') {
+  function setup(current: RecordingItem, portions: RecordingItem[], enabled = true, haftarahName = 'בראשית', parasha = 'בראשית', specialId?: string) {
     vi.stubGlobal('window', { location: { href: 'https://example.com/?student=student' } });
     const student: StudentProfile = {
-      id: 'student', name: 'Student', parasha: 'בראשית', haftarah: haftarahName,
+      id: 'student', name: 'Student', parasha, haftarah: haftarahName,
       barMitzvahDate: '2027-01-01', parashaVerses: 146, skippedVerses: 0,
       learnedParashaVerses: 0, haftarahVerses: 31, learnedHaftarahVerses: 0, portions,
+      readingPlan: specialId ? { weekday: false, aliyot: ['7'], maftir: true, haftarah: true, specialId } : undefined,
     };
     playbackState.enabled = true;
     playbackState.values.set(1, current);
@@ -145,6 +146,34 @@ describe('student auto-play', () => {
     const { finish } = setup(kohen, [first, levi, kohen]);
     expect(finish().player.recording?.id).toBe(levi.id);
     expect(finish().viewers.some((props) => props.defaultPortionKey === 'chol-3')).toBe(true);
+  });
+
+  it('plays the separate festival maftir after the last aliyah and then the haftarah', () => {
+    const fifth = recording('fifth', 'עליית חמישי');
+    const { finish } = setup(fifth, [fifth, maftir, haftarah], true, 'פסח א׳', 'פסח א׳');
+    expect(finish().player.recording?.id).toBe(maftir.id);
+    expect(finish().player.recording?.id).toBe(haftarah.id);
+  });
+
+  it('includes the eighth aliyah on Simchat Torah before the maftir', () => {
+    const eighth = recording('eighth', 'עליית שמיני');
+    const { finish } = setup(seventh, [seventh, eighth, maftir], true, 'שמחת תורה (בשבת)', 'שמחת תורה (בשבת)');
+    expect(finish().player.recording?.id).toBe(eighth.id);
+    expect(finish().player.recording?.id).toBe(maftir.id);
+  });
+
+  it('continues from weekday-labelled festival recordings to the fourth festival aliyah', () => {
+    const israel = recording('israel', 'ישראל', 'chol');
+    const fourth = recording('fourth', 'עליית רביעי');
+    const { finish } = setup(israel, [israel, fourth], true, '', 'פסח ב׳ (חוה״מ)');
+    expect(finish().player.recording?.id).toBe(fourth.id);
+    expect(finish().player.recording?.id).toBe(fourth.id);
+  });
+
+  it('plays the special Shabbat maftir after the seventh aliyah', () => {
+    const { finish } = setup(seventh, [seventh, maftir, haftarah], true, 'שבת ראש חודש חנוכה', 'מקץ', 'Shabbat Rosh Chodesh Chanukah');
+    expect(finish().player.recording?.id).toBe(maftir.id);
+    expect(finish().player.recording?.id).toBe(haftarah.id);
   });
 
   it('does not advance general recordings', () => {

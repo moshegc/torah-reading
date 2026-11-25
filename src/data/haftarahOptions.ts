@@ -1,8 +1,8 @@
-import { findParashaOption, PARASHA_OPTIONS, sortHaftarahNames } from './parashaOptions';
+import { FESTIVAL_OPTIONS, findParashaOption, PARASHA_OPTIONS, sortHaftarahNames } from './parashaOptions';
 import { VERSE_READINGS, type VerseReadingData } from './verseCounts';
 import type { HaftarahTradition } from '../utils/verseCounts';
 
-const parashaNames = new Map(PARASHA_OPTIONS.map((option) => [option.readingId, option.name]));
+const parashaNames = new Map([...PARASHA_OPTIONS, ...FESTIVAL_OPTIONS].map((option) => [option.readingId, option.name]));
 
 const readingsByName = new Map(
   VERSE_READINGS

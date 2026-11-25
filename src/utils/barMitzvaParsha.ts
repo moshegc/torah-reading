@@ -1,6 +1,51 @@
 import { HDate, getSedra, months, parshiot } from '@hebcal/core';
 import { PARASHA_META_LIST } from '../data/torahReference';
 import { findParashaOption } from '../data/parashaOptions';
+import { getFestivalReadingForDate, getFestivalSpecialForDate, getShabbatParashaForDate } from './festivalReading';
+
+export interface ReadingDateChoice {
+  date: string;
+  name: string;
+  specialId?: string;
+  specialName?: string;
+}
+
+export function localDateISO(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/** Reading choices only when a festival occurs between the birthday and the first Shabbat. */
+export function getBarMitzvaReadingChoices(info: BarMitzvaInfo): { festival: ReadingDateChoice; shabbat: ReadingDateChoice } | null {
+  let festival: ReadingDateChoice | undefined;
+  const firstShabbat = new HDate(info.barMitzvaHDate.onOrAfter(6));
+  for (let day = info.barMitzvaHDate.abs(); day <= firstShabbat.abs(); day++) {
+    const date = localDateISO(new HDate(day).greg());
+    const reading = getFestivalReadingForDate(date);
+    if (reading) {
+      festival = { date, name: reading.name };
+      break;
+    }
+    const special = getFestivalSpecialForDate(date);
+    const parasha = special && getShabbatParashaForDate(date);
+    if (special && parasha) {
+      festival = { date, name: parasha.name, specialId: special.id, specialName: special.label };
+      break;
+    }
+  }
+  if (!festival) return null;
+  const date = localDateISO(firstShabbat.greg());
+  const holiday = getFestivalReadingForDate(date);
+  if (holiday) return { festival, shabbat: { date, name: holiday.name } };
+  const parasha = getShabbatParashaForDate(date);
+  if (parasha) {
+    const special = getFestivalSpecialForDate(date);
+    return {
+      festival,
+      shabbat: { date, name: parasha.name, specialId: special?.id, specialName: special?.label },
+    };
+  }
+  throw new Error('No reading found for the first Shabbat');
+}
 
 export interface BarMitzvaInfo {
   /** Hebrew date of birth used for the calculation */
@@ -49,7 +94,7 @@ export function getBarMitzvaHDate(birth: HDate): HDate {
   return new HDate(Math.min(birth.getDate(), dim), month, year);
 }
 
-/** Find the Shabbat on or after `date` which has a regular parsha (skips Yom Tov Shabbatot). */
+/** Find the Shabbat on or after `date` which has a regular parsha. */
 function findParshaShabbat(date: HDate): { hd: HDate; parsha: string[]; parshaHe: string[] } {
   let sat = new HDate(date.onOrAfter(6));
   for (let i = 0; i < 4; i++) {
@@ -115,6 +160,13 @@ export function barMitzvaFromGregorian(dob: Date, afterSunset = false): BarMitzv
 
 /** Calculate from a Hebrew date of birth. */
 export function barMitzvaFromHebrew(input: HebrewDateInput): BarMitzvaInfo {
-  return build(new HDate(input.day, input.month as number, input.year));
+  const date = new HDate(input.day, input.month as number, input.year);
+  if (!Number.isInteger(input.day) || !Number.isInteger(input.year) ||
+      input.year < 5000 || input.year > 6000 ||
+      date.getDate() !== input.day || date.getFullYear() !== input.year ||
+      (typeof input.month === 'number' && date.getMonth() !== input.month) ||
+      (input.month === months.ADAR_II && !HDate.isLeapYear(input.year))) {
+    throw new Error('Invalid Hebrew birth date');
+  }
+  return build(date);
 }
-

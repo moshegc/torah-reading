@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateStudentStats, edate, formatDateIL, parseFlexibleDate } from './trackerCalculations';
+import { calculateStudentStats, decodeStudentShareToken, edate, encodeStudentShareToken, formatDateIL, parseFlexibleDate } from './trackerCalculations';
 import type { StudentProfile } from '../types';
 
 describe('European dates', () => {
@@ -12,6 +12,22 @@ describe('European dates', () => {
     ['29/02/2028', '29/02/2028'],
   ])('formats %s as %s', (input, expected) => {
     expect(formatDateIL(input)).toBe(expected);
+  });
+
+  describe('shared festival reading', () => {
+    it('preserves a special reading, tradition, and an explicitly empty haftarah', () => {
+      const student: StudentProfile = {
+        id: 'test', name: 'Test', parasha: 'מקץ', haftarah: '', barMitzvahDate: '2025-12-20',
+        parashaVerses: 100, skippedVerses: 0, learnedParashaVerses: 0,
+        haftarahVerses: 0, learnedHaftarahVerses: 0, portions: [],
+        readingPlan: { weekday: false, aliyot: ['7'], maftir: true, haftarah: false, specialId: 'Shabbat Rosh Chodesh Chanukah' },
+        haftarahTradition: 'sephardi',
+      };
+      const decoded = decodeStudentShareToken(encodeStudentShareToken(student));
+      expect(decoded?.haftarah).toBe('');
+      expect(decoded?.readingPlan).toEqual(student.readingPlan);
+      expect(decoded?.haftarahTradition).toBe('sephardi');
+    });
   });
 
   describe('study start date', () => {

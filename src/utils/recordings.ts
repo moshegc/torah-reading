@@ -32,7 +32,7 @@ function portionOrder(item: RecordingItem): number {
   if (section === 'haftarah') return 20;
   const label = item.aliyah.toLowerCase();
   const ordinals = ['ראשון|first|1', 'שני|second|2', 'שלישי|third|3', 'רביעי|fourth|4',
-    'חמישי|fifth|5', 'שישי|sixth|6', 'שביעי|seventh|7', 'מפטיר|maftir'];
+    'חמישי|fifth|5', 'שישי|sixth|6', 'שביעי|seventh|7', 'שמיני|חתן בראשית|eighth|8', 'מפטיר|maftir'];
   const index = ordinals.findIndex((words) =>
     new RegExp(`(?:^|[^א-תa-z0-9])(?:${words})(?=$|[^א-תa-z0-9])`).test(label));
   if (item.category === 'chol') {

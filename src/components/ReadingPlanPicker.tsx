@@ -1,5 +1,6 @@
 import React from 'react';
 import { getVerseReadingById } from '../utils/verseCounts';
+import { getParashaVerseReading, findFestivalOption } from '../data/parashaOptions';
 import {
   ALIYOT_KEYS,
   EMPTY_READING_PLAN,
@@ -21,6 +22,7 @@ const ALIYAH_LABELS: Record<string, string> = {
   '5': 'חמישי',
   '6': 'שישי',
   '7': 'שביעי',
+  '8': 'שמיני (חתן בראשית)',
 };
 
 export interface ReadingPlanChange {
@@ -57,6 +59,9 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
   onChange,
 }) => {
   const effectiveTradition = tradition ?? defaultTradition;
+  const reading = getParashaVerseReading(parasha);
+  const festival = !!findFestivalOption(parasha);
+  const aliyahKeys = festival && reading ? Object.keys(reading.aliyot) : ALIYOT_KEYS;
 
   const emit = (nextPlan: ReadingPlan, nextTradition: HaftarahTradition | undefined) => {
     const nextHaftarah = (nextPlan.specialId ?? null) !== (plan.specialId ?? null)
@@ -72,7 +77,7 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
   const toggleAliyah = (key: string) => {
     const has = plan.aliyot.includes(key);
     const aliyot = has ? plan.aliyot.filter((k) => k !== key) : [...plan.aliyot, key];
-    emit({ ...plan, aliyot: ALIYOT_KEYS.filter((k) => aliyot.includes(k)) }, tradition);
+    emit({ ...plan, aliyot: aliyahKeys.filter((k) => aliyot.includes(k)) }, tradition);
   };
 
   const verses = computePlanVerses(parasha, plan, effectiveTradition, haftarahName);
@@ -98,13 +103,20 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
           value=""
           onChange={(e) => {
             if (!e.target.value) return;
-            emit(applyPlanPreset(e.target.value as PlanPresetId, plan), tradition);
+            const preset = applyPlanPreset(e.target.value as PlanPresetId, plan);
+            emit(festival ? {
+              ...preset,
+              aliyot: e.target.value === 'all' ? aliyahKeys : [],
+              weekday: false,
+              maftir: preset.maftir && !!reading?.maftir,
+              haftarah: preset.haftarah && !!haftarahName,
+            } : preset, tradition);
           }}
           className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white"
           aria-label="תבניות מוכנות"
         >
           <option value="">תבניות מוכנות…</option>
-          {PLAN_PRESETS.map((p) => (
+          {PLAN_PRESETS.filter((p) => !festival || p.id !== 'weekday').map((p) => (
             <option key={p.id} value={p.id}>
               {p.label}
             </option>
@@ -113,18 +125,18 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        {checkbox('שני/חמישי', plan.weekday, () => emit({ ...plan, weekday: !plan.weekday }, tradition))}
-        {ALIYOT_KEYS.map((key) => (
+        {!festival && checkbox('שני/חמישי', plan.weekday, () => emit({ ...plan, weekday: !plan.weekday }, tradition))}
+        {aliyahKeys.map((key) => (
           <React.Fragment key={key}>
             {checkbox(ALIYAH_LABELS[key], plan.aliyot.includes(key), () => toggleAliyah(key))}
           </React.Fragment>
         ))}
-        {checkbox('מפטיר', plan.maftir, () => emit({ ...plan, maftir: !plan.maftir }, tradition))}
+        {(!festival || !!reading?.maftir) && checkbox('מפטיר', plan.maftir, () => emit({ ...plan, maftir: !plan.maftir }, tradition))}
         {checkbox('הפטרה', plan.haftarah, () => emit({ ...plan, haftarah: !plan.haftarah }, tradition))}
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <div>
+        {!festival && <div>
           <label className="block text-[11px] text-slate-500 mb-0.5">שבת מיוחדת (מפטיר/הפטרה)</label>
           <select
             value={plan.specialId ?? ''}
@@ -138,7 +150,7 @@ export const ReadingPlanPicker: React.FC<ReadingPlanPickerProps> = ({
               </option>
             ))}
           </select>
-        </div>
+        </div>}
         <div>
           <label className="block text-[11px] text-slate-500 mb-0.5">נוסח ההפטרה</label>
           <select

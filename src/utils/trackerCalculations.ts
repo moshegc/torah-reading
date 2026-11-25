@@ -1,6 +1,16 @@
 import type { StudentProfile, StudentComputedStats, RecordingItem } from '../types';
 import { PARASHA_META_LIST, HAFTAROT_VERSE_COUNTS } from '../data/torahReference';
-import { findParashaOption } from '../data/parashaOptions';
+import { getParashaVerseReading } from '../data/parashaOptions';
+import type { ReadingPlan } from './readingPlan';
+
+function isReadingPlan(value: unknown): value is ReadingPlan {
+  if (!value || typeof value !== 'object') return false;
+  const plan = value as Record<string, unknown>;
+  return typeof plan.weekday === 'boolean' && Array.isArray(plan.aliyot) &&
+    plan.aliyot.every((key: unknown) => typeof key === 'string') &&
+    typeof plan.maftir === 'boolean' && typeof plan.haftarah === 'boolean' &&
+    (plan.specialId === undefined || plan.specialId === null || typeof plan.specialId === 'string');
+}
 
 /**
  * Emulates Excel's DAYS360(start_date, end_date, FALSE)
@@ -76,7 +86,7 @@ export function lookupParashaVerses(parashaName: string): number {
   const found = PARASHA_META_LIST.find(
     (p) => p.name === clean || (clean === 'בחוקתי' && p.name === 'בחוקותי')
   );
-  return found ? found.verses : findParashaOption(clean)?.verses ?? 0; // joint parashot, e.g. "ויקהל-פקודי"
+  return found ? found.verses : getParashaVerseReading(clean)?.torahCount ?? 0;
 }
 
 export function lookupHaftarahVerses(
@@ -235,7 +245,7 @@ export function classifyFileTitle(filename: string): {
   if (base.includes('ישראל') || base.includes('שלישי חול')) {
     return { aliyah: 'ישראל (חול/מנחה)', category: 'chol', ext };
   }
-  for (const al of ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שביעי', 'מפטיר']) {
+  for (const al of ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שביעי', 'שמיני', 'מפטיר']) {
     if (base.includes(al)) {
       return {
         aliyah: al === 'מפטיר' ? 'מפטיר' : `עליית ${al}`,
@@ -275,6 +285,8 @@ export function encodeStudentShareToken(student: StudentProfile): string {
     lp: student.learnedParashaVerses,
     hv: student.haftarahVerses,
     lh: student.learnedHaftarahVerses,
+    rp: student.readingPlan,
+    ht: student.haftarahTradition,
     po: visiblePortions,
   };
 
@@ -324,6 +336,8 @@ export function decodeStudentShareToken(token: string): Partial<StudentProfile> 
       learnedParashaVerses: parsed.lp,
       haftarahVerses: parsed.hv,
       learnedHaftarahVerses: parsed.lh,
+      readingPlan: isReadingPlan(parsed.rp) ? parsed.rp : undefined,
+      haftarahTradition: parsed.ht === 'ashkenazi' || parsed.ht === 'sephardi' ? parsed.ht : undefined,
       portions,
     };
   } catch {

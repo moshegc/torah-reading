@@ -64,6 +64,20 @@ export const PARASHA_OPTIONS: ParashaOption[] = (() => {
   return keyed.sort((a, b) => a.sort - b.sort).map((k) => k.option);
 })();
 
+export const FESTIVAL_OPTIONS = VERSE_READINGS
+  .filter((reading) => reading.kind === 'holiday' && reading.israel)
+  .map((reading) => ({
+    name: reading.heName,
+    readingId: reading.id,
+    verses: reading.torahCount,
+  }));
+
+const festivalByName = new Map(FESTIVAL_OPTIONS.map((option) => [option.name, option]));
+
+export function findFestivalOption(name?: string | null) {
+  return name ? festivalByName.get(name.trim()) : undefined;
+}
+
 const optionByName = new Map(PARASHA_OPTIONS.map((o) => [o.name, o]));
 
 // Spelling variants that appear in student data / recording titles
@@ -103,6 +117,6 @@ export function sortHaftarahNames(names: readonly string[]): string[] {
 
 /** The verse data (aliyot, maftir, weekday, haftarah...) of the selected parasha. */
 export function getParashaVerseReading(name?: string | null): VerseReadingData | undefined {
-  const option = findParashaOption(name);
+  const option = findFestivalOption(name) ?? findParashaOption(name);
   return option ? VERSE_READINGS.find((r) => r.id === option.readingId) : undefined;
 }

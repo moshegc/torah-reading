@@ -1,5 +1,6 @@
 import { getParashaVerseReading } from '../data/parashaOptions';
 import { getHaftarahVerses } from '../data/haftarahOptions';
+import { VERSE_READINGS } from '../data/verseCounts';
 import {
   HaftarahTradition,
   countSelectedVerses,
@@ -12,7 +13,7 @@ export type { HaftarahTradition };
 export interface ReadingPlan {
   /** Monday/Thursday reading */
   weekday: boolean;
-  /** Shabbat aliyot "1".."7" */
+  /** Aliyot "1".."7", or "8" for Simchat Torah on Shabbat */
   aliyot: string[];
   maftir: boolean;
   haftarah: boolean;
@@ -44,6 +45,9 @@ export const SPECIAL_SHABBAT_OPTIONS: { id: string; label: string }[] = [
   { id: 'Shabbat Zachor', label: 'שבת זכור' },
   { id: 'Shabbat Parah', label: 'שבת פרה' },
   { id: 'Shabbat HaChodesh', label: 'שבת החודש' },
+  ...VERSE_READINGS.filter((reading) => reading.kind === 'special-shabbat' &&
+    (reading.id.startsWith('Chanukah Day ') || reading.id === 'Shabbat Rosh Chodesh Chanukah'))
+    .map((reading) => ({ id: reading.id, label: reading.heName })),
 ];
 
 export function applyPlanPreset(id: PlanPresetId, current?: ReadingPlan | null): ReadingPlan {

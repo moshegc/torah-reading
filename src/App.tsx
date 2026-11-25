@@ -437,13 +437,15 @@ function AppContent() {
         id: decodedToken.id || studentParam,
         name: decodedToken.name,
         parasha: decodedToken.parasha,
-        haftarah: decodedToken.haftarah || decodedToken.parasha,
+        haftarah: decodedToken.haftarah ?? decodedToken.parasha,
         barMitzvahDate: decodedToken.barMitzvahDate || '2027-01-01',
         parashaVerses: decodedToken.parashaVerses ?? 100,
         skippedVerses: decodedToken.skippedVerses ?? 0,
         learnedParashaVerses: decodedToken.learnedParashaVerses ?? 0,
         haftarahVerses: decodedToken.haftarahVerses ?? 22,
         learnedHaftarahVerses: decodedToken.learnedHaftarahVerses ?? 0,
+        readingPlan: decodedToken.readingPlan,
+        haftarahTradition: decodedToken.haftarahTradition,
         portions: decodedToken.portions || [],
       };
     }

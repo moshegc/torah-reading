@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CloudUpload, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import type { LibraryChange, RecordingItem, RecordingSection, RecordingNormalization } from '../types';
-import { PARASHA_OPTIONS } from '../data/parashaOptions';
+import { FESTIVAL_OPTIONS, PARASHA_OPTIONS } from '../data/parashaOptions';
 import { uploadLocalFileToR2 } from '../utils/cloudSync';
 import { classifyFileTitle, getMediaStreamUrl } from '../utils/trackerCalculations';
 import { getRecordingSection, isDocument, withRecordingSection } from '../utils/recordings';
@@ -334,7 +334,7 @@ export const TeacherLibraryManager: React.FC<TeacherLibraryManagerProps> = ({
               <label htmlFor="library-new-folder" className="block text-xs font-bold text-slate-700 mb-1">תיקייה חדשה</label>
               <input id="library-new-folder" list="library-folder-suggestions" required value={newFolder} onChange={(event) => setNewFolder(event.target.value)} disabled={disabled} className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm" />
               <datalist id="library-folder-suggestions">
-                {['כללי', 'תמונות', ...PARASHA_OPTIONS.map((option) => option.name)].filter((name) => !folderOptions.includes(name)).map((name) => <option key={name} value={name} />)}
+                {['כללי', 'תמונות', ...PARASHA_OPTIONS.map((option) => option.name), ...FESTIVAL_OPTIONS.map((option) => option.name)].filter((name) => !folderOptions.includes(name)).map((name) => <option key={name} value={name} />)}
               </datalist>
             </div>
             <button type="submit" disabled={disabled} className="px-3 py-2 rounded-xl bg-indigo-50 text-indigo-700 text-sm font-bold flex items-center gap-1"><Plus className="w-4 h-4" />צור תיקייה</button>

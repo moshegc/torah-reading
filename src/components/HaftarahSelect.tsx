@@ -7,10 +7,11 @@ interface HaftarahSelectProps {
   tradition: HaftarahTradition;
   onChange: (name: string) => void;
   className?: string;
+  allowEmpty?: boolean;
 }
 
 export const HaftarahSelect: React.FC<HaftarahSelectProps> = ({
-  value, tradition, onChange, className,
+  value, tradition, onChange, className, allowEmpty = false,
 }) => {
   const reading = findHaftarahReading(value);
   const selected = HAFTARAH_OPTIONS.find((option) => option.reading.id === reading?.id);
@@ -20,9 +21,10 @@ export const HaftarahSelect: React.FC<HaftarahSelectProps> = ({
       value={selected?.name ?? ''}
       onChange={(event) => onChange(event.target.value)}
       className={className}
-      required
+      required={!allowEmpty}
     >
-      {!selected && <option value="" disabled>{value ? `${value} — יש לבחור הפטרה מהרשימה` : 'בחר הפטרה'}</option>}
+      {allowEmpty && <option value="">ללא הפטרה</option>}
+      {!selected && !allowEmpty && <option value="" disabled>{value ? `${value} — יש לבחור הפטרה מהרשימה` : 'בחר הפטרה'}</option>}
       {HAFTARAH_OPTIONS.map((option) => (
         <option key={option.name} value={option.name}>
           {option.name} ({getHaftarahVerses(option.name, tradition)} פס׳)
