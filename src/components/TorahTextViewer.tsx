@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { RecordingItem } from '../types';
 import { getRecordingSection, isDocument, sortRecordings } from '../utils/recordings';
+import { findFestivalOption } from '../data/parashaOptions';
 import {
   TextDisplayMode,
   TextFontSize,
@@ -36,6 +37,7 @@ import {
 interface TorahTextViewerProps {
   parashaName?: string;
   haftarahName?: string;
+  specialId?: string | null;
   recording?: RecordingItem | null;
   studentPortions?: RecordingItem[];
   studentId?: string;
@@ -88,6 +90,7 @@ const FONT_SIZE_CLASSES: Record<
 export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
   parashaName,
   haftarahName,
+  specialId,
   recording,
   studentPortions,
   studentId,
@@ -172,8 +175,9 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
         recording: effectiveRecording,
         overrideKey: overridePortionKey,
         tradition,
+        specialId,
       }),
-    [parashaName, haftarahName, effectiveRecording, overridePortionKey, tradition]
+    [parashaName, haftarahName, effectiveRecording, overridePortionKey, tradition, specialId]
   );
 
   const refsSignature = resolvedTarget ? resolvedTarget.refs.join('|') : '';
@@ -238,15 +242,21 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
     return null;
   }
 
+  const availableOptions = findFestivalOption(parashaName)
+    ? PORTION_SELECTOR_OPTIONS.filter((option) => option.group !== 'chol' && resolvePortionTarget({
+        parashaName, haftarahName, overrideKey: option.key, tradition, specialId,
+      }))
+    : PORTION_SELECTOR_OPTIONS.filter((option) => option.key !== 'shabbat-8');
+
   // Previous / next portion navigation (RTL: right arrow = previous, left arrow = next)
   const navIndex =
     availableStudentPortions.length > 0
       ? availableStudentPortions.findIndex((p) => p.id === effectiveRecording?.id)
-      : PORTION_SELECTOR_OPTIONS.findIndex((o) => o.key === resolvedTarget.portionKey);
+      : availableOptions.findIndex((o) => o.key === resolvedTarget.portionKey);
   const navCount =
     availableStudentPortions.length > 0
       ? availableStudentPortions.length
-      : PORTION_SELECTOR_OPTIONS.length;
+      : availableOptions.length;
   const canGoPrev = navIndex > 0;
   const canGoNext = navIndex >= 0 && navIndex < navCount - 1;
   const goToPortion = (delta: number) => {
@@ -258,7 +268,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
       setOverridePortionKey(null);
     } else {
       setOverrideRecording(null);
-      setOverridePortionKey(PORTION_SELECTOR_OPTIONS[nextIdx].key);
+      setOverridePortionKey(availableOptions[nextIdx].key);
     }
     setShowPortionPicker(false);
     setRevealedVerses({});
@@ -314,7 +324,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
         <div className="flex items-center gap-1.5 shrink-0">
           {/* Switch Aliyah / Portion dropdown toggle */}
           {(availableStudentPortions.length > 1 ||
-            (availableStudentPortions.length === 0 && resolvedTarget.parasha)) && (
+            (availableStudentPortions.length === 0 && availableOptions.length > 1)) && (
             <button
               type="button"
               onClick={() => setShowPortionPicker((prev) => !prev)}
@@ -372,7 +382,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
           <div className="text-[11px] font-semibold text-indigo-300 mb-1.5">
             {availableStudentPortions.length > 0
               ? 'בחירת עלייה / קטע מתוך העליות המשויכות לתלמיד:'
-              : `בחירת עלייה / קטע לקריאה (פרשת ${resolvedTarget.parasha?.heName || ''}):`}
+              : `בחירת עלייה / קטע לקריאה (${resolvedTarget.parasha?.heName || parashaName || ''}):`}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {availableStudentPortions.length > 0
@@ -399,7 +409,7 @@ export const TorahTextViewer: React.FC<TorahTextViewerProps> = ({
                     </button>
                   );
                 })
-              : PORTION_SELECTOR_OPTIONS.map((opt) => {
+              : availableOptions.map((opt) => {
                   const isActive = resolvedTarget.portionKey === opt.key;
                   return (
                     <button

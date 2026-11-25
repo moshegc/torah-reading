@@ -2,7 +2,9 @@ import { PARASHA_SEFARIA_REFS, ParashaSefariaRefs } from '../data/sefariaParasha
 import type { RecordingItem } from '../types';
 import { getJointParashaSefariaRefs } from './jointParashaRefs';
 import { HAFTARAH_OPTIONS } from '../data/haftarahOptions';
-import { getHaftarahSegments } from './verseCounts';
+import { getHaftarahSegments, getVerseReadingById } from './verseCounts';
+import { findFestivalOption, getParashaVerseReading } from '../data/parashaOptions';
+import type { VerseSegment } from '../data/verseCounts';
 
 export type TextDisplayMode = 'full' | 'no_nikud' | 'tikkun' | 'nikud_only';
 export type TextFontSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -15,6 +17,7 @@ export type PortionSelectorKey =
   | 'shabbat-5'
   | 'shabbat-6'
   | 'shabbat-7'
+  | 'shabbat-8'
   | 'maftir'
   | 'chol-1'
   | 'chol-2'
@@ -118,6 +121,7 @@ export function normalizeParashaName(raw?: string): string {
 export function findParashaRefs(parashaName?: string): ParashaSefariaRefs | null {
   const norm = normalizeParashaName(parashaName);
   if (!norm) return null;
+  if (findFestivalOption(norm)) return null;
   const exact = PARASHA_SEFARIA_REFS.find((p) => p.heName === norm);
   if (exact) return exact;
   // Joint parashot (e.g. "ויקהל-פקודי") must be resolved before the substring fallback below,
@@ -194,6 +198,7 @@ export function inferPortionKeyFromRecording(
   }
 
   if (text.includes('מפטיר')) return 'maftir';
+  if (text.includes('שמיני') || text.includes('חתן בראשית')) return 'shabbat-8';
   if (text.includes('ראשון')) return 'shabbat-1';
   if (text.includes('שני')) return 'shabbat-2';
   if (text.includes('שלישי')) return 'shabbat-3';
@@ -284,6 +289,7 @@ export const PORTION_SELECTOR_OPTIONS: {
   { key: 'shabbat-5', label: 'עליית חמישי', shortLabel: 'חמישי', group: 'shabbat' },
   { key: 'shabbat-6', label: 'עליית שישי', shortLabel: 'שישי', group: 'shabbat' },
   { key: 'shabbat-7', label: 'עליית שביעי', shortLabel: 'שביעי', group: 'shabbat' },
+  { key: 'shabbat-8', label: 'עליית שמיני (חתן בראשית)', shortLabel: 'שמיני', group: 'shabbat' },
   { key: 'maftir', label: 'מפטיר', shortLabel: 'מפטיר', group: 'shabbat' },
   { key: 'chol-1', label: 'כהן (חול/מנחה)', shortLabel: 'כהן (חול)', group: 'chol' },
   { key: 'chol-2', label: 'לוי (חול/מנחה)', shortLabel: 'לוי (חול)', group: 'chol' },
@@ -298,13 +304,16 @@ export function resolvePortionTarget(params: {
   recording?: RecordingItem | null;
   overrideKey?: PortionSelectorKey | null;
   tradition?: 'ashkenazi' | 'sephardi';
+  specialId?: string | null;
 }): ResolvedPortionTarget | null {
-  const { parashaName, haftarahName, recording, overrideKey, tradition = 'ashkenazi' } = params;
-  const inferredParasha = inferParashaFromRecording(recording, parashaName);
+  const { parashaName, haftarahName, recording, overrideKey, tradition = 'ashkenazi', specialId } = params;
+  const festival = findFestivalOption(parashaName);
+  const festivalReading = festival ? getParashaVerseReading(festival.name) : undefined;
+  const inferredParasha = festival ? festival.name : inferParashaFromRecording(recording, parashaName);
   const parasha = findParashaRefs(inferredParasha);
 
   const portionKey: PortionSelectorKey | null =
-    overrideKey || inferPortionKeyFromRecording(recording) || (parasha ? 'shabbat-1' : null);
+    overrideKey || inferPortionKeyFromRecording(recording) || (parasha || festivalReading ? 'shabbat-1' : null);
 
   if (!portionKey) return null;
 
@@ -321,7 +330,31 @@ export function resolvePortionTarget(params: {
     };
   }
 
+  if (festivalReading) {
+    let segments: VerseSegment[] = [];
+    if (portionKey.startsWith('shabbat-') || portionKey.startsWith('chol-')) {
+      const segment = festivalReading.aliyot[portionKey.split('-')[1]];
+      if (segment) segments = [segment];
+    } else if (portionKey === 'maftir' && festivalReading.maftir) {
+      segments = [festivalReading.maftir];
+    } else if (portionKey === 'whole') {
+      segments = [...Object.values(festivalReading.aliyot), ...(festivalReading.maftir ? [festivalReading.maftir] : [])];
+    }
+    if (!segments.length) return null;
+    const refs = mergeReadingSegments(segments);
+    const shortLabel = PORTION_SELECTOR_OPTIONS.find((option) => option.key === portionKey)?.label ?? '';
+    return {
+      parasha: null,
+      portionKey,
+      label: `${festivalReading.heName} • ${shortLabel}`,
+      shortLabel,
+      refs,
+      sefariaUrl: buildSefariaWebUrl(refs[0]),
+    };
+  }
+
   if (!parasha) return null;
+  if (portionKey === 'shabbat-8') return null;
 
   const opt = PORTION_SELECTOR_OPTIONS.find((o) => o.key === portionKey);
   const shortLabel =
@@ -338,6 +371,33 @@ export function resolvePortionTarget(params: {
     ref = parasha.weekday[idx];
   } else if (portionKey === 'whole') {
     ref = parasha.wholeRef;
+  }
+  const special = specialId ? getVerseReadingById(specialId) : undefined;
+  if (portionKey.startsWith('shabbat-')) {
+    ref = special?.aliyot[portionKey.split('-')[1]]?.ref ?? ref;
+  } else if (portionKey === 'maftir') {
+    ref = special?.maftir?.ref ?? ref;
+  }
+
+  function mergeReadingSegments(segments: VerseSegment[]): string[] {
+    const merged: { book: string; start: number; end: number; first: string; last: string }[] = [];
+    for (const segment of segments) {
+      const [first, last] = segment.ref.slice(segment.book.length + 1).split('-');
+      const previous = merged[merged.length - 1];
+      if (previous && previous.book === segment.book && segment.start <= previous.end + 1 && segment.end >= previous.start - 1) {
+        if (segment.start < previous.start) {
+          previous.start = segment.start;
+          previous.first = first;
+        }
+        if (segment.end > previous.end) {
+          previous.end = segment.end;
+          previous.last = last;
+        }
+      } else {
+        merged.push({ book: segment.book, start: segment.start, end: segment.end, first, last });
+      }
+    }
+    return merged.map((segment) => `${segment.book} ${segment.first}-${segment.last}`);
   }
 
   return {

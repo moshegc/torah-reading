@@ -25,6 +25,7 @@ import { ModalOverlay } from './ModalOverlay';
 import { TorahTextViewer } from './TorahTextViewer';
 import { getRecordingSection, isDocument, sortRecordings } from '../utils/recordings';
 import { inferPortionKeyFromRecording, PORTION_SELECTOR_OPTIONS, type PortionSelectorKey } from '../utils/sefariaApi';
+import { findFestivalOption, getParashaVerseReading } from '../data/parashaOptions';
 
 interface StudentViewProps {
   student: StudentProfile;
@@ -113,19 +114,40 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
   const handleRecordingEnded = () => {
     if (!autoAdvance || !selectedRecording || getRecordingSection(selectedRecording) === 'general') return;
-    const currentKey = inferPortionKeyFromRecording(selectedRecording);
+    const festival = findFestivalOption(student.parasha) ? getParashaVerseReading(student.parasha) : undefined;
+    const readingKey = (item: RecordingItem): PortionSelectorKey | null => {
+      const key = inferPortionKeyFromRecording(item);
+      if (festival && key?.startsWith('chol-')) {
+        if (key === 'chol-1') return 'shabbat-1';
+        if (key === 'chol-2') return 'shabbat-2';
+        return 'shabbat-3';
+      }
+      return key;
+    };
+    const currentKey = readingKey(selectedRecording);
     if (!currentKey || currentKey === 'haftarah') return;
-    const sequence = PORTION_SELECTOR_OPTIONS.filter((option) =>
+    let sequence = PORTION_SELECTOR_OPTIONS.filter((option) =>
       option.group === (currentKey.startsWith('chol-') ? 'chol' : 'shabbat')
     );
+    if (festival && currentKey.startsWith('shabbat-')) {
+      sequence = sequence.filter((option) => option.key.startsWith('shabbat-') && !!festival.aliyot[option.key.slice(8)]);
+      const last = festival.aliyot[sequence[sequence.length - 1]?.key.slice(8)];
+      const maftir = festival.maftir;
+      if (maftir && (!last || maftir.book !== last.book || maftir.start < last.start || maftir.end > last.end)) {
+        const option = PORTION_SELECTOR_OPTIONS.find((item) => item.key === 'maftir');
+        if (option) sequence.push(option);
+      }
+    }
     const index = sequence.findIndex((option) => option.key === currentKey);
     if (index < 0) return;
-    const nextTorahKey = currentKey === 'shabbat-7' ? null : sequence[index + 1]?.key;
+    const nextTorahKey = !festival && currentKey === 'shabbat-7'
+      ? student.readingPlan?.specialId ? 'maftir' : null
+      : sequence[index + 1]?.key;
     const nextKey = nextTorahKey ?? (student.haftarah.trim() ? 'haftarah' : null);
     if (!nextKey) return;
     const nextTab = nextKey === 'haftarah' ? 'haftarah' : 'torah';
     const portions = nextTab === 'haftarah' ? haftarahPortions : torahPortions;
-    const nextRecording = portions.find((item) => inferPortionKeyFromRecording(item) === nextKey);
+    const nextRecording = portions.find((item) => readingKey(item) === nextKey);
     setActiveTab(nextTab);
     setShowTextPanel(true);
     setStandaloneTorahReader(false);
@@ -173,7 +195,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
           <div className="flex flex-wrap items-center gap-2 text-indigo-100 text-sm mb-4">
             <span className="font-bold text-white text-base">
-              פרשת {student.parasha}
+              {findFestivalOption(student.parasha) ? student.parasha : `פרשת ${student.parasha}`}
             </span>
             {student.haftarah && student.haftarah !== student.parasha && (
               <>
@@ -228,6 +250,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
           <TorahTextViewer
             key={textOnlyPortion}
             parashaName={student.parasha}
+            specialId={student.readingPlan?.specialId}
             haftarahName={student.haftarah}
             tradition={student.haftarahTradition}
             defaultPortionKey={textOnlyPortion}
@@ -284,7 +307,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-2 px-1">
               <h2 className="font-bold text-slate-800 text-base">
-                עליות ללימוד – פרשת {student.parasha}
+                עליות ללימוד – {findFestivalOption(student.parasha) ? student.parasha : `פרשת ${student.parasha}`}
               </h2>
               <div className="flex items-center gap-2">
                 {torahPortions.length > 0 &&
@@ -320,6 +343,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
               ) && (
                 <TorahTextViewer
                   parashaName={student.parasha}
+                  specialId={student.readingPlan?.specialId}
                   haftarahName={student.haftarah}
                   tradition={student.haftarahTradition}
                   studentPortions={torahPortions}
@@ -336,7 +360,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                 <div className="bg-white rounded-2xl border border-slate-200 p-6 text-center">
                   <BookOpen className="w-9 h-9 text-slate-300 mx-auto mb-2" />
                   <p className="font-semibold text-slate-700 text-sm mb-1">
-                    טרם שויכו הקלטות שמע לפרשת {student.parasha}
+                    טרם שויכו הקלטות שמע ל{findFestivalOption(student.parasha) ? student.parasha : `פרשת ${student.parasha}`}
                   </p>
                   <p className="text-xs text-slate-500">
                     בינתיים ניתן לקרוא ולתרגל את פסוקי הפרשה מתוך ספריא (עם או בלי ניקוד וטעמים):
@@ -345,6 +369,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
                 <TorahTextViewer
                   parashaName={student.parasha}
+                  specialId={student.readingPlan?.specialId}
                   haftarahName={student.haftarah}
                   tradition={student.haftarahTradition}
                   studentId={student.id}
@@ -423,6 +448,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                       {isSelected && showTextPanel && (
                         <TorahTextViewer
                           parashaName={student.parasha}
+                          specialId={student.readingPlan?.specialId}
                           haftarahName={student.haftarah}
                           tradition={student.haftarahTradition}
                           recording={rec}
@@ -487,6 +513,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                   <div className="mb-3">
                     <TorahTextViewer
                       parashaName={student.parasha}
+                      specialId={student.readingPlan?.specialId}
                       haftarahName={student.haftarah}
                       tradition={student.haftarahTradition}
                       studentPortions={haftarahPortions}
@@ -514,6 +541,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
 
                   <TorahTextViewer
                     parashaName={student.parasha}
+                    specialId={student.readingPlan?.specialId}
                     haftarahName={student.haftarah}
                     tradition={student.haftarahTradition}
                     defaultPortionKey="haftarah"
@@ -593,6 +621,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
                         {isSelected && showTextPanel && (
                           <TorahTextViewer
                             parashaName={student.parasha}
+                            specialId={student.readingPlan?.specialId}
                             haftarahName={student.haftarah}
                             recording={rec}
                             studentPortions={haftarahPortions}
@@ -810,7 +839,7 @@ export const StudentView: React.FC<StudentViewProps> = ({
           : null}
         onClose={() => setSelectedRecording(null)}
         parashaName={
-          activeTab === 'general' ? 'ברכות וטעמים' : `פרשת ${student.parasha}`
+          activeTab === 'general' ? 'ברכות וטעמים' : findFestivalOption(student.parasha) ? student.parasha : `פרשת ${student.parasha}`
         }
         haftarahName={student.haftarah}
         studentPortions={visiblePortions}

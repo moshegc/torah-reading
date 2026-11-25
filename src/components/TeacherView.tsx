@@ -36,16 +36,18 @@ import { getRecordingSection, isDocument, RECORDING_SECTION_LABELS, sortRecordin
 import { RecordingSectionSelect } from './RecordingSectionSelect';
 import { RecordingFileIcon } from './RecordingFileIcon';
 import { RecordingGainDetails } from './RecordingGainDetails';
-import { PARASHA_OPTIONS } from '../data/parashaOptions';
+import { FESTIVAL_OPTIONS, findFestivalOption, getParashaVerseReading, PARASHA_OPTIONS } from '../data/parashaOptions';
 import { getHaftarahVerses } from '../data/haftarahOptions';
 import { getVerseReadingById } from '../utils/verseCounts';
 import { HaftarahSelect } from './HaftarahSelect';
 import { ReadingPlanPicker } from './ReadingPlanPicker';
 import { DateInput } from './DateInput';
+import { HebrewDateFields } from './HebrewDateFields';
 import { ModalOverlay } from './ModalOverlay';
 import { TeacherLibraryManager } from './TeacherLibraryManager';
 import {
   EMPTY_READING_PLAN,
+  applyPlanPreset,
   computePlanVerses,
   isPlanEmpty,
   type ReadingPlan,
@@ -74,7 +76,28 @@ import {
 import type { DriveSyncStatus } from '../App';
 import { AudioPlayerBar } from './AudioPlayerBar';
 import { AboutLink } from './AboutPage';
-import { barMitzvaFromGregorian, barMitzvaFromHebrew, nextParashaReadingDate, type BarMitzvaInfo } from '../utils/barMitzvaParsha';
+import { barMitzvaFromGregorian, barMitzvaFromHebrew, nextParashaReadingDate, getBarMitzvaReadingChoices, type BarMitzvaInfo, type ReadingDateChoice } from '../utils/barMitzvaParsha';
+import { getFestivalReadingForDate, getFestivalSpecialForDate, getShabbatParashaForDate } from '../utils/festivalReading';
+
+function planForReading(name: string, plan: ReadingPlan): ReadingPlan {
+  const reading = getParashaVerseReading(name);
+  if (!findFestivalOption(name) || !reading) {
+    return { ...plan, aliyot: plan.aliyot.filter((key) => !!reading?.aliyot[key]) };
+  }
+  return {
+    ...plan,
+    weekday: false,
+    aliyot: plan.aliyot.filter((key) => !!reading.aliyot[key]),
+    maftir: plan.maftir && !!reading.maftir,
+    haftarah: plan.haftarah && (reading.haftarah.length > 0 || reading.haftarahSephardi.length > 0),
+    specialId: null,
+  };
+}
+
+function defaultHaftarahForReading(name: string): string {
+  const reading = getParashaVerseReading(name);
+  return findFestivalOption(name) && reading && !reading.haftarah.length && !reading.haftarahSephardi.length ? '' : name;
+}
 
 interface TeacherViewProps {
   teacherId: string;
@@ -193,9 +216,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
   const [dobMode, setDobMode] = useState<'gregorian' | 'hebrew'>('gregorian');
   const [dobGregorian, setDobGregorian] = useState('');
   const [dobAfterSunset, setDobAfterSunset] = useState(false);
-  const [dobHebDay, setDobHebDay] = useState(1);
+  const [dobHebDay, setDobHebDay] = useState('1');
   const [dobHebMonth, setDobHebMonth] = useState(7);
-  const [dobHebYear, setDobHebYear] = useState(5780);
+  const [dobHebYear, setDobHebYear] = useState('5780');
   const [bmCalcResult, setBmCalcResult] = useState<BarMitzvaInfo | null>(null);
   const [bmCalcError, setBmCalcError] = useState<string | null>(null);
 
@@ -205,8 +228,47 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     setParashaDateNotFound(!date);
   };
 
+  const selectNewReading = (name: string, specialId?: string | null) => {
+    const originalPlan = specialId === undefined ? newReadingPlan : { ...newReadingPlan, specialId };
+    const plan = planForReading(name, originalPlan);
+    const haftarah = specialId ? getVerseReadingById(specialId)?.heName ?? name : defaultHaftarahForReading(name);
+    setNewParasha(name);
+    setNewHaftarah(haftarah);
+    setNewReadingPlan(plan);
+    setNewParashaVerses(computePlanVerses(name, plan, newHaftarahTradition ?? defaultHaftarahTradition, haftarah).torah);
+  };
+
+  const selectCalculatedReading = (choice: ReadingDateChoice) => {
+    selectNewReading(choice.name, choice.specialId ?? null);
+    setNewBarMitzvahDate(choice.date);
+  };
+
+  const calculatedChoices = bmCalcResult ? getBarMitzvaReadingChoices(bmCalcResult) : null;
+  const isSelectedChoice = (choice: ReadingDateChoice) =>
+    newParasha === choice.name && newBarMitzvahDate === choice.date &&
+    (newReadingPlan.specialId ?? null) === (choice.specialId ?? null);
+
+  const updateStudentReading = (student: StudentProfile, name: string) => {
+    const plan = student.readingPlan ? planForReading(name, student.readingPlan) : undefined;
+    const haftarah = findFestivalOption(name) ? defaultHaftarahForReading(name) : student.haftarah;
+    const computed = plan && (findFestivalOption(name) || !isPlanEmpty(plan))
+      ? computePlanVerses(name, plan, student.haftarahTradition ?? defaultHaftarahTradition, haftarah)
+      : null;
+    onUpdateStudent({
+      ...student,
+      parasha: name,
+      haftarah,
+      readingPlan: plan,
+      parashaVerses: computed ? computed.torah : lookupParashaVerses(name),
+      haftarahVerses: computed ? computed.haftarah : findFestivalOption(name)
+        ? getHaftarahVerses(haftarah, student.haftarahTradition ?? defaultHaftarahTradition)
+        : student.haftarahVerses,
+    });
+  };
+
   const calculateBarMitzva = () => {
     setBmCalcError(null);
+    setBmCalcResult(null);
     try {
       let info: BarMitzvaInfo;
       if (dobMode === 'gregorian') {
@@ -217,21 +279,21 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
         }
         info = barMitzvaFromGregorian(new Date(y, m - 1, d), dobAfterSunset);
       } else {
-        info = barMitzvaFromHebrew({ day: dobHebDay, month: dobHebMonth, year: dobHebYear });
-      }
-      setBmCalcResult(info);
-      const first = info.parshaHe[0];
-      if (first) {
-        setNewParasha(first);
-        setNewHaftarah(first);
-        if (!newReadingPlan.weekday && newReadingPlan.aliyot.length === 0 && !newReadingPlan.maftir && !newReadingPlan.haftarah) {
-          setNewParashaVerses(0);
-        } else {
-          const computed = computePlanVerses(first, newReadingPlan, newHaftarahTradition ?? defaultHaftarahTradition);
-          setNewParashaVerses(computed.torah);
+        if (!dobHebDay || !dobHebYear) {
+          setBmCalcError('יש להזין יום ושנה לתאריך הלידה');
+          return;
         }
+        info = barMitzvaFromHebrew({ day: Number(dobHebDay), month: dobHebMonth, year: Number(dobHebYear) });
       }
-      setNewBarMitzvahDate(formatDateISO(info.shabbatDate));
+      const choices = getBarMitzvaReadingChoices(info);
+      setBmCalcResult(info);
+      if (choices) {
+        selectCalculatedReading(choices.shabbat);
+      } else {
+        const first = info.parshaHe.join('-');
+        if (first) selectNewReading(first, null);
+        setNewBarMitzvahDate(formatDateISO(info.shabbatDate));
+      }
       setParashaDateNotFound(false);
     } catch {
       setBmCalcResult(null);
@@ -583,7 +645,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
       id: slug,
       name: newName.trim(),
       parasha: newParasha,
-      haftarah: newHaftarah || newParasha,
+      haftarah: newHaftarah,
       barMitzvahDate: newBarMitzvahDate,
       studyStartDate: newStudyStartDate || undefined,
       parashaVerses: Number(newParashaVerses) || 0,
@@ -605,6 +667,8 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
     setNewReadingPlan(EMPTY_READING_PLAN);
     setNewHaftarahTradition(undefined);
     setNewParashaVerses(0);
+    setBmCalcResult(null);
+    setBmCalcError(null);
     setShowAddStudentModal(false);
     openManageModal(created);
   };
@@ -1124,29 +1188,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                               </label>
                               <select
                                 value={student.parasha}
-                                onChange={(e) => {
-                                  const p = e.target.value;
-                                  if (student.readingPlan && !isPlanEmpty(student.readingPlan)) {
-                                    const computed = computePlanVerses(
-                                      p,
-                                      student.readingPlan,
-                                      student.haftarahTradition ?? defaultHaftarahTradition,
-                                      student.haftarah
-                                    );
-                                    onUpdateStudent({
-                                      ...student,
-                                      parasha: p,
-                                      parashaVerses: computed.torah,
-                                      haftarahVerses: computed.haftarah,
-                                    });
-                                  } else {
-                                    onUpdateStudent({
-                                      ...student,
-                                      parasha: p,
-                                      parashaVerses: lookupParashaVerses(p),
-                                    });
-                                  }
-                                }}
+                                onChange={(e) => updateStudentReading(student, e.target.value)}
                                 className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold"
                               >
                                 {PARASHA_OPTIONS.map((po) => (
@@ -1154,6 +1196,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                                     {po.name} ({po.verses} פס׳)
                                   </option>
                                 ))}
+                                <optgroup label="חגים ומועדים – ישראל">
+                                  {FESTIVAL_OPTIONS.map((option) => <option key={option.readingId} value={option.name}>{option.name} ({option.verses} פס׳)</option>)}
+                                </optgroup>
                               </select>
                             </div>
 
@@ -1163,12 +1208,13 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                             </label>
                             <HaftarahSelect
                               value={student.haftarah}
+                              allowEmpty={!!findFestivalOption(student.parasha)}
                               tradition={student.haftarahTradition ?? defaultHaftarahTradition}
                               onChange={(h) => {
                                 onUpdateStudent({
                                   ...student,
                                   haftarah: h,
-                                  readingPlan: { ...(student.readingPlan ?? EMPTY_READING_PLAN), haftarah: true },
+                                  readingPlan: { ...(student.readingPlan ?? EMPTY_READING_PLAN), haftarah: !!h },
                                   haftarahVerses: getHaftarahVerses(h, student.haftarahTradition ?? defaultHaftarahTradition),
                                 });
                               }}
@@ -1203,6 +1249,29 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                               }
                               className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs"
                             />
+                            {getFestivalReadingForDate(student.barMitzvahDate) && getFestivalReadingForDate(student.barMitzvahDate)?.name !== student.parasha && (
+                              <button type="button" className="text-xs text-indigo-700 underline mt-1" onClick={() => {
+                                const suggestion = getFestivalReadingForDate(student.barMitzvahDate);
+                                if (suggestion) updateStudentReading(student, suggestion.name);
+                              }}>
+                                בחר קריאת חג: {getFestivalReadingForDate(student.barMitzvahDate)?.name}
+                              </button>
+                            )}
+                            {getFestivalSpecialForDate(student.barMitzvahDate) && getShabbatParashaForDate(student.barMitzvahDate) &&
+                              (getFestivalSpecialForDate(student.barMitzvahDate)?.id !== student.readingPlan?.specialId ||
+                                getShabbatParashaForDate(student.barMitzvahDate)?.name !== student.parasha) && (
+                              <button type="button" className="text-xs text-indigo-700 underline mt-1" onClick={() => {
+                                const special = getFestivalSpecialForDate(student.barMitzvahDate);
+                                const parasha = getShabbatParashaForDate(student.barMitzvahDate);
+                                if (!special || !parasha) return;
+                                const plan = { ...planForReading(parasha.name, student.readingPlan ?? applyPlanPreset('all')), specialId: special.id };
+                                const haftarah = special.label;
+                                const verses = computePlanVerses(parasha.name, plan, student.haftarahTradition ?? defaultHaftarahTradition, haftarah);
+                                onUpdateStudent({ ...student, parasha: parasha.name, readingPlan: plan, haftarah, parashaVerses: verses.torah, haftarahVerses: verses.haftarah });
+                              }}>
+                                בחר {getShabbatParashaForDate(student.barMitzvahDate)?.name} – {getFestivalSpecialForDate(student.barMitzvahDate)?.label}
+                              </button>
+                            )}
                           </div>
 
                           <div>
@@ -1872,6 +1941,7 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                     <option value="עליית חמישי" />
                     <option value="עליית שישי" />
                     <option value="עליית שביעי" />
+                    <option value="עליית שמיני (חתן בראשית)" />
                     <option value="מפטיר" />
                     <option value="הפטרה" />
                     <option value="כהן (חול/מנחה)" />
@@ -2158,14 +2228,14 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <div className="flex gap-1 text-[11px]">
                     <button
                       type="button"
-                      onClick={() => setDobMode('gregorian')}
+                      onClick={() => { setDobMode('gregorian'); setBmCalcResult(null); setBmCalcError(null); }}
                       className={`px-2 py-0.5 rounded-lg border ${dobMode === 'gregorian' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300'}`}
                     >
                       לועזי
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDobMode('hebrew')}
+                      onClick={() => { setDobMode('hebrew'); setBmCalcResult(null); setBmCalcError(null); }}
                       className={`px-2 py-0.5 rounded-lg border ${dobMode === 'hebrew' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300'}`}
                     >
                       עברי
@@ -2177,50 +2247,27 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   <div className="flex flex-wrap items-center gap-2">
                     <DateInput
                       value={dobGregorian}
-                      onChange={setDobGregorian}
+                      onChange={(value) => { setDobGregorian(value); setBmCalcResult(null); setBmCalcError(null); }}
                       className="min-w-0 w-full sm:w-auto border border-slate-300 rounded-xl px-3 py-1.5 text-sm"
                     />
                     <label className="flex items-center gap-1 text-[11px] text-slate-600">
                       <input
                         type="checkbox"
                         checked={dobAfterSunset}
-                        onChange={(e) => setDobAfterSunset(e.target.checked)}
+                        onChange={(e) => { setDobAfterSunset(e.target.checked); setBmCalcResult(null); setBmCalcError(null); }}
                       />
                       נולד אחרי השקיעה
                     </label>
                   </div>
                 ) : (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      max={30}
-                      value={dobHebDay}
-                      onChange={(e) => setDobHebDay(Number(e.target.value) || 1)}
-                      className="w-16 border border-slate-300 rounded-xl px-2 py-1.5 text-sm"
-                    />
-                    <select
-                      value={dobHebMonth}
-                      onChange={(e) => setDobHebMonth(Number(e.target.value))}
-                      className="border border-slate-300 rounded-xl px-2 py-1.5 text-sm"
-                    >
-                      {([
-                        [7, 'תשרי'], [8, 'חשוון'], [9, 'כסלו'], [10, 'טבת'], [11, 'שבט'],
-                        [12, 'אדר (אדר א׳)'], [13, 'אדר ב׳'], [1, 'ניסן'], [2, 'אייר'],
-                        [3, 'סיוון'], [4, 'תמוז'], [5, 'אב'], [6, 'אלול'],
-                      ] as [number, string][]).map(([n, label]) => (
-                        <option key={n} value={n}>{label}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={5000}
-                      max={6000}
-                      value={dobHebYear}
-                      onChange={(e) => setDobHebYear(Number(e.target.value) || 5780)}
-                      className="w-24 border border-slate-300 rounded-xl px-2 py-1.5 text-sm"
-                    />
-                  </div>
+                  <HebrewDateFields
+                    day={dobHebDay}
+                    month={dobHebMonth}
+                    year={dobHebYear}
+                    onDayChange={(value) => { setDobHebDay(value); setBmCalcResult(null); setBmCalcError(null); }}
+                    onMonthChange={(value) => { setDobHebMonth(value); setBmCalcResult(null); setBmCalcError(null); }}
+                    onYearChange={(value) => { setDobHebYear(value); setBmCalcResult(null); setBmCalcError(null); }}
+                  />
                 )}
 
                 <button
@@ -2232,35 +2279,61 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                 </button>
                 {bmCalcError && <p className="text-[11px] text-red-600">{bmCalcError}</p>}
                 {bmCalcResult && (
-                  <p className="text-[11px] text-slate-700 leading-relaxed">
-                    יום ההולדת ה-13: {bmCalcResult.barMitzvaHDate.render('he')} (
-                    {formatDateIL(bmCalcResult.barMitzvaDate)}).<br />
-                    שבת הקריאה: {formatDateIL(bmCalcResult.shabbatDate)} – פרשת{' '}
-                    <strong>{bmCalcResult.parshaHe.join(' - ')}</strong>
-                    {bmCalcResult.parshaHe.length > 1 && ' (פרשה כפולה – נבחרה הראשונה, ניתן לשנות)'}
-                  </p>
+                  <div className="text-[11px] text-slate-700 leading-relaxed">
+                    <p>
+                      יום ההולדת ה-13: {bmCalcResult.barMitzvaHDate.render('he')} (
+                      {formatDateIL(bmCalcResult.barMitzvaDate)}).
+                      {!calculatedChoices && <> שבת הקריאה: {formatDateIL(bmCalcResult.shabbatDate)} – פרשת <strong>{bmCalcResult.parshaHe.join(' - ')}</strong></>}
+                    </p>
+                    {calculatedChoices && (
+                      <div className="mt-1 flex flex-col items-start gap-1">
+                        <span>יש לבחור את מועד הקריאה:</span>
+                        <button type="button" className="text-indigo-700 underline" aria-pressed={isSelectedChoice(calculatedChoices.festival)} onClick={() => selectCalculatedReading(calculatedChoices.festival)}>
+                          קריאת חג: {calculatedChoices.festival.specialName ?? calculatedChoices.festival.name} – {formatDateIL(calculatedChoices.festival.date)}
+                          {isSelectedChoice(calculatedChoices.festival) && ' (נבחר)'}
+                        </button>
+                        <button type="button" className="text-indigo-700 underline" aria-pressed={isSelectedChoice(calculatedChoices.shabbat)} onClick={() => selectCalculatedReading(calculatedChoices.shabbat)}>
+                          קריאת שבת: {calculatedChoices.shabbat.name}{calculatedChoices.shabbat.specialName ? ` – ${calculatedChoices.shabbat.specialName}` : ''} – {formatDateIL(calculatedChoices.shabbat.date)}
+                          {isSelectedChoice(calculatedChoices.shabbat) && ' (נבחר)'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
+                    {(!calculatedChoices || (newBarMitzvahDate !== calculatedChoices.festival.date && newBarMitzvahDate !== calculatedChoices.shabbat.date)) && getFestivalReadingForDate(newBarMitzvahDate) && getFestivalReadingForDate(newBarMitzvahDate)?.name !== newParasha && (
+                      <button type="button" className="text-xs text-indigo-700 underline" onClick={() => {
+                        const suggestion = getFestivalReadingForDate(newBarMitzvahDate);
+                        if (suggestion) selectNewReading(suggestion.name);
+                      }}>
+                        בחר קריאת חג לתאריך שנבחר: {getFestivalReadingForDate(newBarMitzvahDate)?.name}
+                      </button>
+                    )}
+                    {(!calculatedChoices || (newBarMitzvahDate !== calculatedChoices.festival.date && newBarMitzvahDate !== calculatedChoices.shabbat.date)) && getFestivalSpecialForDate(newBarMitzvahDate) && getShabbatParashaForDate(newBarMitzvahDate) &&
+                      (getFestivalSpecialForDate(newBarMitzvahDate)?.id !== newReadingPlan.specialId ||
+                        getShabbatParashaForDate(newBarMitzvahDate)?.name !== newParasha) && (
+                      <button type="button" className="text-xs text-indigo-700 underline" onClick={() => {
+                        const special = getFestivalSpecialForDate(newBarMitzvahDate);
+                        const parasha = getShabbatParashaForDate(newBarMitzvahDate);
+                        if (special && parasha) selectNewReading(parasha.name, special.id);
+                      }}>
+                        בחר {getShabbatParashaForDate(newBarMitzvahDate)?.name} – {getFestivalSpecialForDate(newBarMitzvahDate)?.label}
+                      </button>
+                    )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label htmlFor="new-student-parasha" className="block text-xs font-bold text-slate-700 mb-1">
-                    פרשת בר המצווה
+                    פרשה או קריאת חג
                   </label>
                   <select
                     id="new-student-parasha"
                     value={newParasha}
                     onChange={(e) => {
                       const p = e.target.value;
-                      setNewParasha(p);
-                      setNewHaftarah(p);
+                      selectNewReading(p, null);
                       setBmCalcResult(null);
-                      suggestBarMitzvahDate(p);
-                      if (!newReadingPlan.weekday && newReadingPlan.aliyot.length === 0 && !newReadingPlan.maftir && !newReadingPlan.haftarah) {
-                        setNewParashaVerses(0);
-                      } else {
-                        const computed = computePlanVerses(p, newReadingPlan, newHaftarahTradition ?? defaultHaftarahTradition);
-                        setNewParashaVerses(computed.torah);
-                      }
+                      if (!findFestivalOption(p)) suggestBarMitzvahDate(p);
+                      else setParashaDateNotFound(false);
                     }}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   >
@@ -2269,6 +2342,9 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                         {po.name} ({po.verses} פס׳)
                       </option>
                     ))}
+                    <optgroup label="חגים ומועדים – ישראל">
+                      {FESTIVAL_OPTIONS.map((option) => <option key={option.readingId} value={option.name}>{option.name} ({option.verses} פס׳)</option>)}
+                    </optgroup>
                   </select>
                 </div>
 
@@ -2321,10 +2397,11 @@ export const TeacherView: React.FC<TeacherViewProps> = ({
                   </label>
                   <HaftarahSelect
                     value={newHaftarah}
+                    allowEmpty={!!findFestivalOption(newParasha)}
                     tradition={newHaftarahTradition ?? defaultHaftarahTradition}
                     onChange={(name) => {
                       setNewHaftarah(name);
-                      setNewReadingPlan({ ...newReadingPlan, haftarah: true });
+                      setNewReadingPlan({ ...newReadingPlan, haftarah: !!name });
                     }}
                     className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm"
                   />

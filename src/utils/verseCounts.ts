@@ -6,7 +6,7 @@ export type HaftarahTradition = 'ashkenazi' | 'sephardi';
 export interface VerseSelection {
   /** Monday/Thursday (weekday) reading */
   weekday?: boolean;
-  /** Shabbat/Yom Tov aliyot keys ("1".."7"), or 'all' */
+  /** Shabbat/Yom Tov aliyot keys (including "8" on Simchat Torah), or 'all' */
   aliyot?: string[] | 'all';
   maftir?: boolean;
   haftarah?: boolean;
